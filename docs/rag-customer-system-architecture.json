@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "RAG 智能客服系统 · 系统架构",
+    "locale": "zh-CN",
+    "output": "rag-customer-system-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "qa-path", "label": "智能问答主链路", "focus": ["clients", "api", "rag", "embedding", "pgvector", "deepseek"], "note": "提问经 API 进入 RAG 编排：查询向量化 → Top-K 检索 → 模型选编号 → Java 拼原文。" },
+      { "id": "human-handoff", "label": "转人工与客服", "focus": ["clients", "api", "agent", "redis"], "note": "答不上或用户要求真人时升级为人工会话，由 Redis 排队并按最少负载分配客服。" },
+      { "id": "data-auth", "label": "数据与缓存", "focus": ["api", "mysql", "redis", "pgvector"], "note": "JWT 统一鉴权，业务数据落 MySQL，问答缓存与客服状态落 Redis。" }
+    ]
+  },
+  "components": [
+    { "id": "clients", "type": "external", "label": "多端客户端", "sublabel": "Web / 小程序 / Android", "pos": [40, 40], "size": [150, 68], "tag": "游客可访问" },
+    { "id": "api", "type": "backend", "label": "Spring Boot 3 API", "sublabel": "REST / SSE :8080", "pos": [260, 40], "size": [150, 68], "tag": "JWT / RBAC", "brand": "spring" },
+    { "id": "rag", "type": "backend", "label": "RAG 问答编排", "sublabel": "ChatServiceImpl", "pos": [480, 40], "size": [150, 68], "tag": "抽取式回答" },
+    { "id": "pgvector", "type": "database", "label": "PostgreSQL + pgvector", "sublabel": "rag_vector :5432", "pos": [700, 40], "size": [150, 68], "tag": "COSINE + HNSW", "brand": "postgresql" },
+    { "id": "mysql", "type": "database", "label": "MySQL 8.0", "sublabel": "rag_customer", "pos": [40, 258], "size": [150, 60], "tag": "12 张表", "brand": "mysql" },
+    { "id": "agent", "type": "backend", "label": "人工客服 AgentService", "sublabel": "WebSocket /ws", "pos": [260, 258], "size": [150, 60], "tag": "最少负载分配" },
+    { "id": "redis", "type": "database", "label": "Redis 7", "sublabel": "缓存 / 客服状态", "pos": [480, 258], "size": [150, 60], "tag": "TTL 3600s", "brand": "redis" },
+    { "id": "deepseek", "type": "external", "label": "DeepSeek Chat", "sublabel": "deepseek-chat", "pos": [700, 258], "size": [150, 60], "tag": "temperature 0", "brand": "deepseek" },
+    { "id": "embedding", "type": "external", "label": "SiliconFlow Embedding", "sublabel": "BAAI/bge-m3", "pos": [920, 258], "size": [150, 60], "tag": "1024 维" }
+  ],
+  "connections": [
+    { "id": "clients-to-api", "from": "clients", "to": "api", "label": "REST / SSE", "variant": "emphasis" },
+    { "id": "api-to-rag", "from": "api", "to": "rag" },
+    { "id": "rag-retrieve", "from": "rag", "to": "pgvector", "label": "Top-K 检索" },
+    { "id": "rag-to-deepseek", "from": "rag", "to": "deepseek", "label": "抽取式生成" },
+    { "id": "api-sql", "from": "api", "to": "mysql", "label": "MyBatis-Plus" },
+    { "id": "api-transfer", "from": "api", "to": "agent", "label": "转人工", "variant": "dashed", "labelDy": 30 },
+    { "id": "agent-queue", "from": "agent", "to": "redis", "label": "排队 / 分配", "variant": "dashed" },
+    { "id": "rag-cache", "from": "rag", "to": "redis", "label": "qa:cache 命中", "labelDy": 30, "labelDx": -50 },
+    { "id": "rag-embed", "from": "rag", "to": "embedding", "label": "查询向量化", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "多端接入", "items": ["Web / 小程序 / Android 共用一套 REST + SSE 接口，游客免登录即可问答"] },
+    { "dot": "emerald", "title": "问答链路", "items": ["qa:cache 未命中才走向量检索，命中直接返回并标记 fromCache", "模型只输出分组 JSON + 原文行号，Java 逐字拼原文，杜绝语序错乱", "答案按源文去重，末尾附「参考文件」尾注"] },
+    { "dot": "rose", "title": "鉴权与账号", "items": ["Spring Security + JWT（HS256）统一鉴权，管理接口再叠加 RBAC", "6 位角色前缀账号号：11 用户 / 12 客服 / 13 管理员，统一走 AccountNoService 取号"] }
+  ]
+}

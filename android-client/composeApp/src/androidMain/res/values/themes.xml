@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 不依赖 AppCompat：用平台 Material 无 ActionBar 主题，界面全部由 Compose(Miuix) 绘制 -->
+    <style name="Theme.RagCustomer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

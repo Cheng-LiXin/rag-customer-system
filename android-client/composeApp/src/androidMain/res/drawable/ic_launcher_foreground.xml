@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 白色对话气泡 + 三点 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 气泡主体（居中，位于 66dp 安全区内） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M30,34 h48 a10,10 0 0 1 10,10 v12 a10,10 0 0 1 -10,10 H56 l-11,11 v-11 H40 a10,10 0 0 1 -10,-10 V44 a10,10 0 0 1 10,-10 Z" />
+    <!-- 三点（品牌蓝） -->
+    <path
+        android:fillColor="#FF3482FF"
+        android:pathData="M42,50 m-3,0 a3,3 0 1 1 6,0 a3,3 0 1 1 -6,0" />
+    <path
+        android:fillColor="#FF3482FF"
+        android:pathData="M54,50 m-3,0 a3,3 0 1 1 6,0 a3,3 0 1 1 -6,0" />
+    <path
+        android:fillColor="#FF3482FF"
+        android:pathData="M66,50 m-3,0 a3,3 0 1 1 6,0 a3,3 0 1 1 -6,0" />
+</vector>

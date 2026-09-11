@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "人工客服会话 · 状态机",
+    "locale": "zh-CN",
+    "output": "rag-conversation-lifecycle.html",
+    "viewBox": [1085, 566],
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "happy-path", "label": "正常接待", "focus": ["robot", "transfer", "queued", "serving", "ended"], "note": "机器人会话 → 转人工 → 排队 → 接待 → 结束，主线按 01~05 推进。" },
+      { "id": "recycle", "label": "客服下线回收", "focus": ["serving", "queued"], "note": "客服 WebSocket 断开时名下会话重新入队，不置结束。" },
+      { "id": "exits", "label": "结束与重开", "focus": ["robot", "serving", "ended"], "note": "三条结束路径（manual / timeout / 机器人静默超时）与 reopen。" }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "会话主链路" },
+    { "id": "recovery", "label": "回收与重开" },
+    { "id": "terminal", "label": "结束" }
+  ],
+  "states": [
+    { "id": "robot", "type": "start", "label": "机器人会话", "sublabel": "AUTO · status=1", "lane": "main", "col": 0, "step": "01", "tag": "AUTO" },
+    { "id": "transfer", "type": "decision", "label": "转人工", "sublabel": "有客服直接分配，否则入队", "lane": "main", "col": 1, "step": "02", "tag": "分流" },
+    { "id": "queued", "type": "waiting", "label": "等待接入", "sublabel": "rag:cs:queue 排队", "lane": "main", "col": 2, "step": "03", "tag": "排队" },
+    { "id": "serving", "type": "active", "label": "客服接待中", "sublabel": "agent_id 非空 · 双向 WS", "lane": "main", "col": 3, "step": "04", "tag": "接待" },
+    { "id": "ended", "type": "success", "label": "已结束", "sublabel": "manual / timeout 置 2", "lane": "main", "col": 4, "step": "05", "tag": "终态" }
+  ],
+  "transitions": [
+    { "id": "t-end", "from": "serving", "to": "ended", "label": "结束", "variant": "emphasis", "route": "straight" },
+    { "id": "t-offline", "from": "serving", "to": "queued", "label": "客服下线 → 重新入队", "variant": "dashed", "route": "bottom-channel", "channelY": 230 },
+    { "id": "t-reopen", "from": "ended", "to": "serving", "label": "reopen", "variant": "emphasis", "route": "bottom-channel", "channelY": 300, "labelDx": -70 },
+    { "id": "t-auto", "from": "robot", "to": "ended", "label": "静默 30 分钟 → 结束", "variant": "security", "route": "bottom-channel", "channelY": 380 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "状态模型只有两态", "items": ["conversation.status 只有 1=进行中 / 2=已结束，没有「已解决/已关闭」——那是 ticket 工单表的四态，两套体系别混", "人工的「排队中 / 已分配」不是 DB 状态，而是 Redis 子状态：在 rag:cs:queue 还是在 rag:cs:assign"] },
+    { "dot": "amber", "title": "三个容易踩的点", "items": ["结束不清 agent_id：已结束会话仍保留归属客服，便于回查", "排队未接的会话（agent_id 为空）不会被 10 分钟超时扫到，避免误杀还在等待的用户", "机器人会话静默超时走纯 SQL：不发 WS 通知、也不碰 Redis"] }
+  ]
+}

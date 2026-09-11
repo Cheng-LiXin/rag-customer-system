@@ -1,0 +1,63 @@
+{
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 (knowledge-collector for graduation project)",
+  "timeout": 30,
+  "retries": 2,
+  "delay": [0.8, 1.6],
+  "max_articles_per_list": 12,
+  "min_body_chars": 120,
+  "sections": [
+    {
+      "id": "招生问答",
+      "category": 1,
+      "note": "招生网·常见问题栏目 = 燕山大学2026考生问答（整篇大FAQ，自动切多块）",
+      "seed_articles": ["http://zsjyc.ysu.edu.cn/info/1512/7045.htm"]
+    },
+    {
+      "id": "迎新入学须知",
+      "category": 3,
+      "note": "迎新网·入学须知列表（校园网/邮箱/一卡通/今日校园等新生高频问题）",
+      "list_url": "http://freshman.ysu.edu.cn/xsxz1.htm",
+      "seed_articles": []
+    },
+    {
+      "id": "新生入学须知2026",
+      "category": 3,
+      "note": "燕山大学主站·2026年本科新生入学须知（官方必读长文）",
+      "seed_articles": ["http://www.ysu.edu.cn/info/5425/45183.htm"]
+    },
+    {
+      "id": "招生通知2026级",
+      "category": 1,
+      "note": "招生网·2026级新生入学事务通知（未报到统计/资格复查/二学位调档函）",
+      "seed_articles": [
+        "https://zsjyc.ysu.edu.cn/info/1270/7067.htm",
+        "https://zsjyc.ysu.edu.cn/info/1270/7066.htm",
+        "https://zsjyc.ysu.edu.cn/info/1270/7065.htm"
+      ]
+    },
+    {
+      "id": "教务管理规定",
+      "category": 2,
+      "note": "教务处·本科教学规章制度（考试违规/成绩/学籍/转专业/学分转换/学业预警/教学事故/实习/实验）",
+      "seed_articles": [
+        "https://jwc.ysu.edu.cn/info/1042/8864.htm",
+        "https://jwc.ysu.edu.cn/content.jsp?urltype=news.NewsContentUrl&wbtreeid=1042&wbnewsid=6329",
+        "https://jwc.ysu.edu.cn/content.jsp?urltype=news.NewsContentUrl&wbtreeid=1041&wbnewsid=8740",
+        "https://jwc.ysu.edu.cn/info/1041/1195.htm",
+        "https://jwc.ysu.edu.cn/info/1041/3422.htm",
+        "https://jwc.ysu.edu.cn/info/1041/2382.htm",
+        "https://jwc.ysu.edu.cn/content.jsp?urltype=news.NewsContentUrl&wbtreeid=1043&wbnewsid=3421",
+        "https://jwc.ysu.edu.cn/content.jsp?urltype=news.NewsContentUrl&wbtreeid=1044&wbnewsid=6929",
+        "https://jwc.ysu.edu.cn/content.jsp?urltype=news.NewsContentUrl&wbtreeid=1044&wbnewsid=6930"
+      ]
+    },
+    {
+      "id": "学校概况",
+      "category": 4,
+      "note": "燕山大学主站·学校简介",
+      "seed_articles": [
+        "https://www.ysu.edu.cn/xxgk/xxjj.htm"
+      ]
+    }
+  ]
+}

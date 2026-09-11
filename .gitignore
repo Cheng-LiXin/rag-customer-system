@@ -1,0 +1,71 @@
+# 根目录误落的 Spring Boot 解包产物
+/META-INF/
+
+# 嵌套的 Git 源码副本（自带 .git），绝不能提交
+/git/
+
+# 构建产物
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 前端 / 小程序依赖与产物
+node_modules/
+dist/
+frontend/dist/
+mp-client/dist/
+*.local
+
+# Android 构建
+build/
+.gradle/
+local.properties
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# 本地 AI / 工具会话
+.claude/
+.mimocode/
+memory/
+.claude-code/
+
+# 本地密钥与环境（示例见 application.yml 注释）
+.env
+.env.*
+!.env.example
+application-local.yml
+application-local.yaml
+application-dev.yml
+application-dev.yaml
+*.pem
+*.key
+
+# 知识库采集/导入中间产物与缓存
+tools/web-collect/out/
+tools/kb-import/.cache/
+tools/kb-import/*.cache
+*.tmp
+*.bak
+*.swp
+
+# Maven wrapper 本地
+.mvn/wrapper/maven-wrapper.jar

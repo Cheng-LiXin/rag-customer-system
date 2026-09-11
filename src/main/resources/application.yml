@@ -1,0 +1,113 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-customer-system
+
+  # ========== 文件上传（知识库批量导入）==========
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+  # ========== MySQL（本地已安装，先执行 src/main/resources/schema.sql 初始化）==========
+  # 生产/共享环境请用环境变量覆盖：MYSQL_USERNAME / MYSQL_PASSWORD
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/rag_customer?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+
+  # ========== Redis 7（Docker，见 docker-compose.yml）==========
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: ${REDIS_PASSWORD:}   # 若设置了密码请用环境变量
+      database: 0
+      timeout: 5s
+
+  # ========== Spring AI + DeepSeek ==========
+  ai:
+    openai:
+      # ★ 使用前请配置环境变量 DEEPSEEK_API_KEY / SILICONFLOW_API_KEY
+      # PowerShell 设置：$env:DEEPSEEK_API_KEY="sk-xxxx"
+      # 缺省为空字符串，保证 IDEA 里未配置环境变量时应用也能启动；
+      # 未配置 key 时调用 AI 接口会返回鉴权错误。
+      api-key: ${DEEPSEEK_API_KEY:}
+      # DeepSeek 提供 OpenAI 兼容接口，base-url 不要带 /v1 后缀
+      base-url: https://api.deepseek.com
+      chat:
+        options:
+          model: deepseek-chat
+          # 温度取 0：知识库问答要求整句引用原文、语序通顺。
+          # 较高温会让模型“改写/浓缩”句子，产生词序颠倒/句子残缺（如
+          # “统一分发到同学们手中”被写成“分发到。同学们手中”）。
+          temperature: 0.0
+      embedding:
+        api-key: ${SILICONFLOW_API_KEY:}
+        base-url: https://api.siliconflow.cn
+        options:
+          model: BAAI/bge-m3
+
+# ========== MyBatis-Plus ==========
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# ========== PGVector 独立数据源（Docker，见 docker-compose.yml）==========
+# PostgreSQL 仅用于向量检索，不参与业务数据存储
+# 生产/共享环境请用环境变量覆盖：POSTGRES_USERNAME / POSTGRES_PASSWORD
+pgvector:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/rag_vector
+    username: ${POSTGRES_USERNAME:postgres}
+    password: ${POSTGRES_PASSWORD:}
+  # 向量维度：必须与所用 Embedding 模型的输出维度一致
+  dimensions: 1024
+
+# ========== JWT ==========
+# ★ 必须通过环境变量 JWT_SECRET 提供（HS256，长度 >= 32 字符）。
+# 仓库中不内置可用默认密钥；本地开发请复制 application-local.yml.example 为 application-local.yml。
+jwt:
+  secret: ${JWT_SECRET:}
+  expiration: 86400000   # 24 小时（毫秒）
+
+# ========== RAG 业务配置 ==========
+rag:
+  cache:
+    # 热门问答缓存过期时间（秒），见 SRS 4.1.5
+    ttl-seconds: 3600
+  # 向量检索返回的 Top-K 数量（SRS 取 3）
+  top-k: 3
+  # 抽取式「宽松兜底」最低相似度门槛：最相似片段达到该相似度才允许对宽泛问法挑最相关句作答，否则回兜底（见 ChatServiceImpl.answer）
+  partial-min-score: 0.55
+  # 结构化 markdown 回答（主路径）：模型只输出「小标题 + 原文行号分组」，Java 逐字拼原文并渲染 markdown 表格；
+  # false 则完全复刻旧版扁平抽取（线上回滚开关）。enabled 失败/为空会自动降级扁平，不会比旧版更易回兜底。
+  structured:
+    enabled: true
+    # 答案要点（分点）数量上限
+    max-groups: 4
+    # 每个要点最多引用的原文句/表格行数
+    max-per-group: 4
+  # 会话生命周期：自动会话连续无消息多久判定为「已结束」，定时任务扫描间隔
+  session:
+    timeout-minutes: 30
+    close-interval-ms: 60000
+  # 人工会话：已分配客服的人工会话连续无消息多久自动结束（客服与用户均未说话）
+  human:
+    timeout-minutes: 10
+
+# ========== 日志 ==========
+logging:
+  level:
+    com.rag: debug

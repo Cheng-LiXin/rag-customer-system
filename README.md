@@ -1,0 +1,236 @@
+# rag-customer-system — 基于 RAG 的智能客服系统
+
+基于 **RAG（检索增强生成）** 的燕山大学智能客服系统：用户向机器人提问，系统先对知识库做向量检索、再交由大模型**只做抽取/组织、不自由发挥**地生成结构化回答；回答不上时可**转人工客服**（WebSocket + 最少负载分配）由真人接管。配套管理后台（知识库/会话/工单/用户/违禁词/操作日志/数据统计）与客服工作台。
+
+开发期深度约定、踩坑与运营方法论见 `CLAUDE.md` 与 `docs/知识库运营手册.md`。
+
+## 功能总览
+
+| 模块 | 说明 |
+| ---- | ---- |
+| 智能问答 F01 | SSE/普通 RAG 问答：缓存 → 向量检索 → 结构化 markdown 回答（抽取式，防语序乱序）；参考来源 + 尾注 |
+| 知识库 F02 | 知识片段与分类管理：CSV 批量导入/导出、自动向量化、重建向量 |
+| 意图识别 F03 | 评分式关键词规则分类（6 类 ~110 词），历史消息可批量回填 |
+| 人工客服 F04 | 游客/用户点「转人工」→ 排队 + 最少负载分配；WebSocket 实时对话、结束会话、满意度评价 |
+| 会话 F05 | 会话生命周期：AI 会话复用、AUTO 30 分钟 / 已接人工会话 10 分钟无对话自动结束、人工会话归属、历史对话回放 |
+| 工单 F06 | 用户/客服提交工单，客服处理，状态流转（待处理→处理中→已解决→已关闭） |
+| 数据统计 F07 | ECharts 看板：总量、趋势、类型/意图分布、满意度、热门知识 Top10、向量化状态 |
+| 系统管理 F08 | 用户 / 角色 / 权限 RBAC、操作日志（AOP 审计） |
+| 账号与合规（扩展） | 手机号自助注册、6 位角色前缀账号号、密码 BCrypt、昵称 30 天限改、违禁词屏蔽 |
+| 客户画像（扩展） | 个人资料省/市/身份，客服工作台客户名片、会话归属实时 join 昵称 |
+
+## 技术栈
+
+| 组件 | 技术 |
+| ---- | ---- |
+| 后端 | Spring Boot **3.2.5** / JDK **17** / Maven / Lombok / Validation / AOP |
+| 数据库 | MySQL 8.0（业务库 `rag_customer`，12 张表）+ PostgreSQL 15 + **pgvector**（向量库 `rag_vector`，1024 维） |
+| ORM | MyBatis-Plus **3.5.5**（`@TableLogic` 逻辑删除、LambdaQueryWrapper、驼峰映射） |
+| 缓存 / 协调 | Redis 7：RAG 问答缓存、人工客服在线/排队/分配、跨实例 Pub/Sub |
+| AI | Spring AI **0.8.1**（OpenAI 兼容）：**Chat = DeepSeek `deepseek-chat`**；**Embedding = SiliconFlow `BAAI/bge-m3`**（1024 维）。DeepSeek 官方无 Embedding 接口，故向量化单独走 SiliconFlow |
+| 实时通信 | WebSocket（人工客服）+ SSE（流式问答） |
+| 安全 | Spring Security + JWT（jjwt 0.11.5，HS256，subject=用户名） |
+| 前端 | Vue 3.5 + Vite 5 + TypeScript + Pinia + Element Plus 2.8 + ECharts 5.6（`frontend/`） |
+
+## 架构与关键设计
+
+```
+前端 ChatHome ──POST /api/chat/ask──▶ ChatServiceImpl
+       │ SSE（GET /chat/stream，Flux<String>）       │ ① qa:cache:{MD5(问题)} 命中即回
+       ▼                                           ▼ ② PGVector 向量检索 Top-K（bge-m3）
+   参考来源/意图标签                              ③ 结构化生成：模型只输出「分组 JSON + 原文行号」
+                                                  ④ Java 按行号逐字拼原文 → markdown（防语序错乱）
+       │  回答不了/游客要求真人 ──POST /api/agent/transfer──▶ AgentService
+       ▼                                                    最少负载分配在线客服，WebSocket 实时对话
+   满意度评价、历史对话抽屉
+```
+
+- **结构化 markdown 回答（默认开）**：A 路让模型只输出 `{"groups":[{"t":"小标题","n":[原文行号]}]}`，Java 按行号逐字拼接原文渲染（`**小标题**` + `- 原文句`），竖线表格聚成合法 markdown 表格，末尾按来源去重附「参考文件：」尾注；A 路异常/空结果降级到 B 路（旧版扁平抽取式三档）。模型**从不整段复述长文**，这是防语序错乱的根因对策。
+- **命中率三档**：严格选句（全量）→ 严格选句（收敛 top-1）→ 最相似片段相似度 ≥ `rag.partial-min-score`(0.55) 时宽松档（挑至多 3 句承载实质信息的句子）；纯提问/标题句剔出答案。否定兜底文案（「没有相关内容…」）**不入缓存**，避免复测误命中。
+- **缓存策略**：键 `qa:cache:{MD5(问题)}`，TTL `3600s`（`rag.cache.ttl-seconds`）；命中直接返回 `fromCache=true`，未命中向量检索 + 生成后**异步**写回。
+- **意图识别（评分式）**：扫描词表给命中的关键词所属意图累分，取最高；平票比「最长命中词长度」（专词压泛词，如「一卡通」>「校园」）；仍并列按固定顺序。词表 ~110 词 6 类：招生政策 / 教务服务 / 学工服务 / 校园生活 / 专业设置 / 学校概况，其余落「其他」。
+- **会话生命周期**：复用「进行中(status=1)」AUTO 会话（登录用户按 userId、或按 conversationId 归属校验）；`ConversationAutoCloseTask` 每 60s 扫描——AUTO 连续 30 分钟无消息即结束；**已分配客服的 HUMAN 会话双方连续 10 分钟无对话也会自动结束**（`closeConversation(reason=timeout)` 完整收尾 + WS 通知双方；排队未接的除外，避免误杀等待用户）。WS `closed` 事件带 `reason`（manual/timeout），前端据此展示「客服已结束」或「长时间未对话已自动结束」。转人工会把原 AI 会话升级为 HUMAN 保留上下文。
+- **转人工分配（最少负载）**：Redis 存在线客服集合（持有 WS 的客服）、等待队列、`rag:cs:assign` 分配关系、`rag:cs:load` 每客服负载；`pickAgent` 取**在管会话数最少**的在线客服，分配后双向 WS 推送并落库 `conversation.agent_id`。客服下线其名下会话自动重新入队。详见 `AgentService.java`。
+- **6 位角色前缀账号号**：`sys_user.id` = 角色前缀（**11 用户 / 12 客服 / 13 管理员**）×10000 + 同前缀 4 位序号。取号统一走 `AccountNoService.nextId(prefix)`（`@Transactional` 内 `sys_id_seq` 行锁 `UPDATE curr+1` 后读）。游客哨兵 `userId=0` 保留；id 全链路按不透明 Long 使用，不做前缀解析。
+- **昵称 30 天限改 + 违禁词**：`sys_user.nickname_updated_at` 记录最近改昵称时间，`AuthController.updateProfile` 仅昵称变化时校验（冷却期剩 N 天）；admin 改他人昵称不受限。违禁词表 `sys_banned_word`（status=1 生效）在**个人资料提交**（昵称/邮箱）处强制 substring 拦截，不拦聊天；词表 admin 后台可维护，改动即生效。
+
+## 快速开始
+
+```bash
+# 1. 启动 Redis + PostgreSQL(PGVector)
+docker compose up -d
+
+# 2. 初始化业务库 MySQL（schema.sql 会 DROP+重建，含种子；每次改表后重放）
+mysql -uroot -p < src/main/resources/schema.sql
+
+# 3. 配置本地密钥（推荐）
+# 复制示例为本地覆盖文件（已在 .gitignore 中忽略，不会提交）
+cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
+# 或用环境变量（Windows PowerShell）：
+$env:JWT_SECRET="local-dev-only-change-me-0123456789abcdef"   # HS256，长度 >= 32
+$env:MYSQL_PASSWORD="123456"
+$env:POSTGRES_PASSWORD="postgres"
+$env:DEEPSEEK_API_KEY="sk-deepseek-xxx"        # Chat 用 DeepSeek
+$env:SILICONFLOW_API_KEY="sk-siliconflow-xxx"  # Embedding 用 SiliconFlow
+
+# 4. 按需修改 src/main/resources/application.yml 的库名/主机；口令一律走环境变量或 application-local.yml
+# 5. 启动（DataInitializer 自动重建 demo 账号并重置其密码）
+mvn spring-boot:run
+
+# 6. 验证
+curl http://localhost:8080/api/rag/hello
+# → {"code":200,"message":"success","data":"Hello RAG"}
+```
+
+> `docker compose up -d` 会启动 Redis（`rag-redis`）与 PG 官方 pgvector 镜像（`rag-postgres`，库 `rag_vector`），并自动挂载执行 `init-pg.sql` 启用 `vector` 扩展。`vector_store` 表由 Spring AI 首启自动创建，无需手动建表。
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev        # 开发 http://localhost:5173（/api、/ws 代理到 8080）
+npm run build      # 生产构建 → frontend/dist
+```
+
+## 默认账号（启动时由 DataInitializer 自动创建并重置密码）
+
+| 账号 | 密码 | 角色 | 账号 ID |
+| ---- | ---- | ---- | ---- |
+| admin | admin123 | 系统管理员（ADMIN） | 130001 |
+| agent | agent123 | 人工客服（AGENT） | 120001 |
+| user | user123 | 普通用户（USER） | 110001 |
+
+普通用户也可在 `/register` **手机号自助注册**（自动分配 11 前缀账号号，登录账号即手机号）；客服(12)/管理员(13) 由管理员在后台新建（按所选最高角色定前缀）。注册密码 BCrypt 加密入库，前端一律 `show-password` 小眼明文切换。
+
+## 前端页面
+
+| 路由 | 页面 | 说明 |
+| ---- | ---- | ---- |
+| `/login` `/register` | 登录 / 注册 | 注册成功后自动登录进对话页 |
+| `/chat` | 对话（游客可访问） | 预设问题、SSE 问答 + 参考来源、转人工/排队/满意度、历史对话抽屉 |
+| `/profile` | 个人信息 | 资料编辑（省/市级联、身份）、昵称 30 天限改倒计时、改密码 |
+| `/agent` | 客服工作台 | 进行中/排队/已结束会话、实时对话、客户名片、我的工单 |
+| `/admin/statistics` | 数据统计 | ECharts 看板（ADMIN/AGENT） |
+| `/admin/knowledge` | 知识库管理 | 片段 + 分类（分类是内嵌 Tab），导入/导出（仅 ADMIN） |
+| `/admin/conversation` | 会话管理 | 列表 + 消息弹窗、处理客服列（ADMIN/AGENT） |
+| `/admin/ticket` | 工单管理 | 列表/详情/状态流转/分配（ADMIN/AGENT） |
+| `/admin/user` | 用户管理 | 账号 ID 列 + 角色多选建号（仅 ADMIN） |
+| `/admin/banned-word` | 违禁词管理 | 词表增删改查（仅 ADMIN） |
+| `/admin/log` | 操作日志 | 按用户名/模块筛选（仅 ADMIN） |
+
+登录后按角色跳转：管理员 → 数据统计、客服 → 工作台、用户 → 对话。路由守卫按 `meta.roles`（`ROLE_ADMIN`/`ROLE_AGENT`）控权，菜单随 `auth.isAdmin/isAgent` 显隐。AI 回复经 `MarkdownText.vue`（marked + DOMPurify）渲染。
+
+## 常用接口
+
+> 均返回统一结构 `{ code, message, data }`。`code==200` 为成功，业务错误（如「该手机号已注册」「昵称含违禁词」）也走 HTTP 200 + `code:500`。
+> 放行（`permitAll`）：`/api/auth/login`、`/api/auth/register`、`/api/rag/hello`、`/api/chat/**`、`/api/intent/**`、`/ws/**`；其余需 JWT，管理/客服接口再用 `@PreAuthorize` 做 RBAC。
+
+| 模块 | 接口 | 说明 |
+| ---- | ---- | ---- |
+| 认证 | `POST /api/auth/login` | 登录，返回 JWT |
+| | `POST /api/auth/register` | 手机号自助注册（permitAll，出 11 前缀号） |
+| | `GET /api/auth/me` | 当前登录用户 + 角色列表（含 id/昵称/头像） |
+| | `GET /api/auth/profile` | 本人详细资料（含昵称限改状态/省/市/身份/账号状态） |
+| | `PUT /api/auth/profile` | 修改本人资料（昵称 30 天限改 + 违禁词） |
+| | `PUT /api/auth/password` | 修改密码 |
+| 智能问答 | `POST /api/chat/ask` | 普通问答（缓存 → 检索 → 结构化回答） |
+| | `POST /api/chat/send` | `/ask` 旧别名 |
+| | `GET /api/chat/stream?message=&conversationId=` | SSE 流式问答 |
+| | `GET /api/chat/history` | 当前用户会话列表（未登录返回空） |
+| | `GET /api/chat/history/{id}/messages` | 某会话消息（归属校验） |
+| 意图识别 | `GET /api/intent/classify?question=` | 关键词意图分类 |
+| | `POST /api/intent/reclassify` | 批量回填历史 USER 消息意图（ADMIN） |
+| 知识库 | `GET/POST/PUT/DELETE /api/knowledge/chunk[/{id}]` | 片段增删改查/分页（ADMIN，自动向量化） |
+| | `POST /api/knowledge/chunk/{id}/reindex` | 重建向量 |
+| | `GET /api/knowledge/chunk/export` | 导出全部片段 CSV（带 BOM） |
+| | `POST /api/knowledge/chunk/import` | CSV 批量导入（multipart，自动向量化） |
+| | `GET/POST/PUT/DELETE /api/knowledge/category[...]` | 分类管理 |
+| 人工客服 | `POST /api/agent/transfer` | 转人工（排队 + 最少负载分配，需 JWT） |
+| | `GET /api/agent/queue/{id}` | 排队位置 |
+| | `GET /api/agent/workbench` | 工作台：在线客服/排队/我名下/已结束（ADMIN/AGENT） |
+| | `POST /api/agent/conversation/{id}/close` | 关闭会话（触发满意度） |
+| | `POST /api/agent/conversation/{id}/read` | 已读，清未读数 |
+| | `POST /api/agent/conversation/{id}/reopen` | 重新接待已结束会话（ADMIN/AGENT） |
+| 会话 | `GET /api/conversation/page` | 会话分页（type/status/agentId/排序；回填昵称）（ADMIN/AGENT） |
+| | `GET /api/conversation/{id}` / `/{id}/messages` | 会话详情/消息 |
+| | `GET /api/conversation/{id}/customer` | 会话归属客户资料（游客 `{guest:true}`） |
+| 工单 | `POST /api/ticket` | 创建工单（客服自建自动分配给自己进处理中）（ADMIN/AGENT） |
+| | `GET /api/ticket/page` / `/{id}` | 工单分页/详情 |
+| | `PUT /api/ticket/{id}/status` | 状态流转（1待处理 2处理中 3已解决 4已关闭） |
+| | `PUT /api/ticket/{id}/assign` | 分配给指定客服 |
+| 满意度 | `POST /api/satisfaction` | 提交评分（1-5，需 JWT） |
+| 统计 | `GET /api/statistics/summary` | 统计总览（ADMIN/AGENT） |
+| 用户管理 | `GET/POST/PUT/DELETE /api/admin/user[...]` | 用户管理（ADMIN；新建按最高角色定前缀） |
+| 角色/权限 | `GET/POST/PUT/DELETE /api/admin/role[...]`、`GET /api/admin/permission/list` | 角色/权限（ADMIN） |
+| 违禁词 | `GET/POST/PUT/DELETE /api/admin/banned-word[...]` | 违禁词 CRUD（ADMIN） |
+| 操作日志 | `GET /api/log/page` | 日志分页（ADMIN） |
+| WebSocket | `WS /ws/customer-service` | 人工客服通道；协议 `{"type":"register","role":"agent|user",...}`、`{"type":"message",...}` |
+
+## 关键配置（`src/main/resources/application.yml`）
+
+| 键 | 默认值 | 说明 |
+| ---- | ---- | ---- |
+| `spring.ai.openai.base-url` | `https://api.deepseek.com` | Chat 网关 |
+| `spring.ai.openai.chat.options.model` | `deepseek-chat` | Chat 模型（temperature 0） |
+| `spring.ai.openai.embedding.base-url` | `https://api.siliconflow.cn` | Embedding 网关（密钥 `SILICONFLOW_API_KEY`） |
+| `spring.ai.openai.embedding.options.model` | `BAAI/bge-m3` | Embedding 模型（1024 维，与 pgvector 一致） |
+| `rag.top-k` | 3 | 向量检索 Top-K |
+| `rag.cache.ttl-seconds` | 3600 | 问答缓存 TTL |
+| `rag.partial-min-score` | 0.55 | 宽松兜底最低相似度门槛 |
+| `rag.structured.enabled` / `max-groups` / `max-per-group` | true / 4 / 4 | 结构化 markdown 回答开关与要点/每要点行数上限 |
+| `rag.session.timeout-minutes` / `close-interval-ms` | 30 / 60000 | AUTO 会话无消息超时 / 定时扫描间隔 |
+| `rag.human.timeout-minutes` | 10 | 已分配客服的人工会话：双方连续无对话自动结束阈值 |
+| `mybatis-plus` | — | 驼峰映射、逻辑删除 deleted（1/0） |
+| `jwt.secret` / `jwt.expiration` | — | HS256 密钥 / 24h |
+
+## 数据存储
+
+- **MySQL `rag_customer`（业务库，12 张表，无外键，应用层关联）**：
+  - 账号/认证：`sys_user`（6 位账号号、昵称限改时间戳、省/市/身份）、`sys_id_seq`（取号器）、`sys_banned_word`、`sys_role`、`sys_permission`、`sys_user_role`、`sys_role_permission`
+  - 知识库：`knowledge_category`（树）、`knowledge_chunk`（切片 + `source_url/source_title/vector_id/vector_status/deleted` 逻辑删除）
+  - 会话/消息：`conversation`（AUTO/HUMAN、agent_id）、`message`（sender_type、intent_category、citations）
+  - 其它：`ticket`、`satisfaction`、`operation_log`
+- **PostgreSQL `rag_vector`（向量库）**：`vector_store`（Spring AI 自动建，1024 维，COSINE + HNSW）。向量化只用切片 `content`，标题只放 metadata 供展示。
+- **Redis**：`qa:cache:{MD5}` 问答缓存；`rag:cs:agents/queue/assign/load/unread` 人工客服状态；Pub/Sub 频道 `rag:cs:channel` 跨实例路由 WS 消息。
+- 无独立统计表：统计由 `StatisticsMapper` 对业务表做聚合查询。
+
+## 知识数据流水线（采集 → 切块 → 导入）
+
+1. 日常一键：`tools/kb_oneclick.ps1`（采集→切块→可选加小标题→后台导入→修复 vector_status=2）；方法论与命令详见 `docs/知识库运营手册.md`。
+2. 官网采集：`tools/web-collect/collect_ysu.py` 精抓燕山大学官网文章输出 Markdown + `manifest`。
+3. 切块：`tools/kb-import/kb_csv_builder.ps1` 按标题/段落聚成 150~500 字片段，输出 `标题,分类ID,内容,关键词,来源链接`（UTF-8 BOM，按 manifest 回填来源链接——热门 Top10 归并的数据基础）。
+4. （可选）`tools/kb-import/add_subheadings.py` 调 DeepSeek 为片段生成小标题（按 MD5 缓存不重复计费）。
+5. 导入 `POST /api/knowledge/chunk/import` 后查分页确认 `vectorStatus=1`（2=向量化失败需重索引）。导入只增不删，重导前先删旧。
+6. 问答型扩充：`tools/qa-from-bot/qa_to_kb.py` 把学校现成机器人 FAQ 清单转成 Markdown 喂给一键脚本（`template` 生成待填清单 / `build` 清单转库）。
+7. 数据策展纪律：权威句带全称主语、一个片段一个话题；导入时保证 `source_url`/`source_title` 非空（否则热门知识按标题归并、检索命中率下降）。
+
+## 目录结构
+
+```
+├─ src/main/java/com/rag
+│  ├─ controller/  dto/  entity/  mapper/  service/      # 分层：控制/DTO/实体/持久/业务
+│  ├─ config/       # Security、WebSocket、Redis、PgVector、DataInitializer(demo账号)、Scheduling
+│  ├─ handler/      # CustomerServiceWebSocketHandler
+│  ├─ task/         # ConversationAutoCloseTask（30min 自动关会话）
+│  ├─ annotation/ aspect/  # @OperationLog 操作日志 AOP
+│  └─ util/         # JwtUtil、Result、SecurityUtil
+├─ src/main/resources/application.yml、schema.sql
+├─ frontend/        # Vue3 单页（api/views/layouts/router/stores/components/data）
+├─ tools/           # 知识数据流水线脚本 + db 迁移 SQL
+├─ docs/知识库运营手册.md
+└─ init-pg.sql      # PG vector 扩展
+```
+
+## 构建校验
+
+- 后端：`mvn clean compile -DskipTests`（需 MySQL / PostgreSQL / Redis 已启动并配置 `DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`）
+- 前端：`cd frontend && npm run build`
+
+## 注意事项
+
+- **改 schema.sql 后**需重放 `mysql -uroot -p < src/main/resources/schema.sql`（DROP+CREATE 清数据）；增量加列用 `ALTER TABLE`。账号体系演进参考一次性迁移 `tools/db/migration_account_v2.sql`（重建 sys_user/sys_id_seq/sys_banned_word，保留知识库与 RBAC 种子）。
+- **deepseek-chat 对长文逐字复述不稳定**：生成侧一律「模型只选编号/分组、Java 拼原文」，不要绕回整段复述路径。
+- 存量 `qa:cache:*` 若为改版前的否定答案，需清一次 Redis 再复测（否则旧否定会命中）。否定兜底已改为不入缓存。
+- Windows PowerShell 直接 `curl --data-raw` 发中文会按 GBK 编码 → 后端报「系统繁忙」；请先落 UTF-8（无 BOM）文件再 `--data-binary @file`。
+- 数据库密码已 BCrypt 入库、接口返回一律置空；前端密码框 `show-password`。
