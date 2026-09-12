@@ -1,0 +1,122 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "title": "RAG 智能客服 · 运行看板",
+  "uid": "rag-customer-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "tags": ["rag", "customer-service"],
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "问答 QPS",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_qa_answers_total[1m]))",
+          "legendFormat": "总 QPS"
+        },
+        {
+          "refId": "B",
+          "datasource": "Prometheus",
+          "expr": "sum(rate(rag_qa_answers_total{result=\"cached\"}[1m]))",
+          "legendFormat": "其中缓存命中"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "TTFT（秒，伪流式口径：≈全链路耗时）",
+      "description": "本项目 SSE 在 Flux 创建前已把答案整段算出，首片 token 到达时间即全链路耗时，不是真流式低延迟。",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "rag_qa_ttft_seconds{quantile=\"0.5\"}",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": "Prometheus",
+          "expr": "rag_qa_ttft_seconds{quantile=\"0.95\"}",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "BM25 语料规模（条）",
+      "description": "应与 knowledge_chunk 的 COUNT(*) WHERE deleted=0 AND status=1 一致；不一致说明索引与库不同步。",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "datasource": "Prometheus", "expr": "rag_corpus_size" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "piechart",
+      "title": "问答结局分布",
+      "description": "answered 正常作答 / fallback 兜底 / refused 相似度过低拒答 / blocked 注入拦截 / cached 缓存命中。这条分布能直接看出防护有没有误杀、命中率有没有退化。",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "sum by (result) (increase(rag_qa_answers_total[$__range]))",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "注入防护命中（按层）",
+      "description": "input 输入层 / context 上下文层 / output 输出层。用来看哪一层在实际起作用。",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "sum by (layer) (rate(rag_guard_blocks_total[5m]))",
+          "legendFormat": "{{layer}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "防护命中明细（层 × 规则）",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": "Prometheus",
+          "expr": "sum by (layer, rule) (increase(rag_guard_blocks_total[$__range]))",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}

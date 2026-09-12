@@ -1,0 +1,13 @@
+# 看板自动加载：把 /var/lib/grafana/dashboards 下的 JSON 全部导入
+apiVersion: 1
+
+providers:
+  - name: rag-customer
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

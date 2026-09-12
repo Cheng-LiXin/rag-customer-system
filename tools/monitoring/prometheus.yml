@@ -1,0 +1,18 @@
+# =============================================================================
+# Prometheus 抓取配置（批次 F）
+# -----------------------------------------------------------------------------
+# 只抓后端一个目标：actuator 的 Prometheus 端点开在容器的 9091 端口，
+# 走的是 Docker 内部网络（backend:9091），**没有映射到宿主机** ——
+# 指标端点不该出现在公网上。
+# =============================================================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: rag-customer-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["backend:9091"]
+        labels:
+          service: rag-customer

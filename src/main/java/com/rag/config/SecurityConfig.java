@@ -42,7 +42,13 @@ public class SecurityConfig {
                                 "/api/rag/hello",
                                 "/api/chat/**",
                                 "/api/intent/**",
-                                "/ws/**"
+                                "/ws/**",
+                                // 指标端点放行 —— 它**不跑在应用端口上**（management.server.port=9091），
+                                // 且该端口不映射到宿主机，只给容器网络内的 Prometheus 抓取。
+                                // 不放行的话 Prometheus 抓不到（会拿到 401）。
+                                "/actuator/health",
+                                "/actuator/info",
+                                "/actuator/prometheus"
                         ).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint))

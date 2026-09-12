@@ -165,6 +165,18 @@
             <version>2.0.31</version>
         </dependency>
 
+        <!-- ========== 可观测性：actuator 暴露指标 + Prometheus 抓取端点（批次 F）========== -->
+        <!-- 端口单独开在 management.server.port=9091，且**不映射到宿主机**，只给容器网络内的
+             Prometheus 抓取 —— 指标端点不该出现在公网上。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <!-- ========== Lombok ========== -->
         <dependency>
             <groupId>org.projectlombok</groupId>
