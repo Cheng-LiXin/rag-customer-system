@@ -121,21 +121,99 @@
               <span v-if="m.streaming" class="typing">
                 <span class="dot"></span><span class="dot"></span><span class="dot"></span>
               </span>
-              <!-- 机器人回答按 Markdown 渲染（加粗/列表/代码等），用户与人工客服消息保持原文 -->
-              <MarkdownText v-else-if="m.role === 'ai' && !m.error" :text="m.content" />
+              <!-- 机器人回答按 Markdown 渲染（加粗/列表/代码等），用户与人工客服消息保持原文。
+                   正文里的行内引用角标 [n] 由 MarkdownText 转成可点击的 sup，点击后展开第 n 条来源 -->
+              <MarkdownText
+                v-else-if="m.role === 'ai' && !m.error"
+                :text="m.content"
+                @cite="(n) => onCite(m, n)"
+              />
               <span v-else class="bubble-text" :class="{ 'is-error': m.error }">{{ m.content }}</span>
+            </div>
+
+            <!-- 低置信：答案照给，提示可转人工核实（不打断阅读，故用弱提示） -->
+            <div v-if="m.role === 'ai' && m.lowConfidence && !m.rejected" class="answer-note">
+              <el-icon><Warning /></el-icon>
+              该回答依据的相关度偏低，仅供参考，必要时可转人工核实。
+            </div>
+
+            <!-- 拒答：由后端 rejected 标志位驱动（不靠文案匹配），直接给转人工入口。
+                 注入拦截与「相似度过低」的文案要分开：前者是安全策略，后者是资料不足 -->
+            <div v-if="m.role === 'ai' && m.rejected" class="answer-cta" :class="{ 'is-guard': isGuardBlock(m) }">
+              <div class="answer-cta-text">
+                <el-icon><Warning /></el-icon>
+                {{ isGuardBlock(m) ? '该请求已被安全策略拦截' : '未找到可靠依据，建议转人工客服核实' }}
+              </div>
+              <el-button
+                size="small"
+                type="primary"
+                :disabled="humanStatus === 'connected' || humanStatus === 'queuing'"
+                @click="transferToHuman"
+              >
+                转人工客服
+              </el-button>
+            </div>
+
+            <!-- 消息级反馈（数据飞轮入口）：登录用户才能提交（接口需 JWT，且要防匿名刷） -->
+            <div
+              v-if="m.role === 'ai' && !m.streaming && !m.error && m.messageId && auth.isLoggedIn"
+              class="msg-feedback"
+            >
+              <span class="fb-label">这条回答有帮助吗？</span>
+              <button
+                class="fb-btn"
+                :class="{ 'is-on': m.feedback === 1 }"
+                :disabled="!!m.feedback"
+                title="有帮助"
+                @click="onFeedback(m, 1)"
+              >
+                👍
+              </button>
+              <button
+                class="fb-btn"
+                :class="{ 'is-on': m.feedback === 2 }"
+                :disabled="!!m.feedback"
+                title="没帮助"
+                @click="onFeedback(m, 2)"
+              >
+                👎
+              </button>
+              <span v-if="m.feedback" class="fb-done">已反馈，感谢！</span>
             </div>
 
             <div v-if="m.sources && m.sources.length" class="sources">
               <div class="sources-title">
                 <el-icon><Document /></el-icon>
                 参考来源（{{ m.sources.length }}）
+                <span class="sources-hint">点击条目或正文中的 [n] 可展开原文</span>
               </div>
-              <div v-for="(s, i) in m.sources" :key="i" class="source-item">
-                <div class="source-head">
-                  <span class="source-title">{{ s.title || '知识片段' }}</span>
+              <div
+                v-for="(s, i) in m.sources"
+                :key="i"
+                class="source-item"
+                :class="{ 'is-open': isSourceOpen(m, i) }"
+                :data-src-key="srcKey(m, i)"
+              >
+                <div class="source-head" @click="toggleSource(m, i)">
+                  <span class="source-badge">{{ s.index ?? i + 1 }}</span>
+                  <span class="source-title">{{ s.title || s.sourceTitle || '知识片段' }}</span>
                   <el-tag v-if="s.category" size="small" effect="plain">{{ s.category }}</el-tag>
                   <span v-if="s.score != null" class="source-score">相似度 {{ (s.score * 100).toFixed(0) }}%</span>
+                  <el-icon class="source-caret" :class="{ 'is-open': isSourceOpen(m, i) }">
+                    <ArrowDown />
+                  </el-icon>
+                </div>
+                <!-- 展开后展示「原条目」：条目 ID、更新时间、来源链接与逐字原文（默认折叠，不打扰阅读） -->
+                <div v-if="isSourceOpen(m, i)" class="source-detail">
+                  <div class="source-meta">
+                    <span>条目 ID：{{ s.chunkId || '-' }}</span>
+                    <span v-if="s.updateTime">更新时间：{{ fmtTime(s.updateTime) }}</span>
+                    <a v-if="s.sourceUrl" :href="s.sourceUrl" target="_blank" rel="noopener noreferrer">
+                      查看原文链接
+                    </a>
+                  </div>
+                  <div v-if="s.sourceTitle" class="source-file">来源文件：{{ s.sourceTitle }}</div>
+                  <MarkdownText v-if="s.content" class="source-content" :text="s.content" />
                 </div>
               </div>
             </div>
@@ -243,11 +321,12 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Setting, ArrowDown, Service, Document, HomeFilled, Clock, User } from '@element-plus/icons-vue'
+import { Setting, ArrowDown, Service, Document, HomeFilled, Clock, User, Warning } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import MarkdownText from '@/components/MarkdownText.vue'
 import { streamUrl, getHistory, getHistoryMessages } from '@/api/chat'
 import { transfer, submitSatisfaction, closeConversation } from '@/api/agent'
+import { submitMessageFeedback } from '@/api/unresolved'
 import type { Source, Conversation, Message } from '@/types'
 
 interface ChatMsg {
@@ -259,6 +338,18 @@ interface ChatMsg {
   sources?: Source[]
   intentCategory?: string
   error?: boolean
+  /** 后端拒答标志（相似度过低/命中防护）：据此展示「转人工客服」入口，不靠文案匹配 */
+  rejected?: boolean
+  /** 拒答原因：low-score | injection-input | injection-context | injection-output */
+  rejectReason?: string
+  /** 低置信提示 */
+  lowConfidence?: boolean
+  /** 该机器人回答在 message 表的 id（提交 👍/👎 用） */
+  messageId?: number
+  /** 已提交的反馈：1-有帮助 2-没帮助 */
+  feedback?: number
+  /** 本次检索最高相似度，供排查 */
+  maxScore?: number | null
 }
 
 const router = useRouter()
@@ -269,6 +360,76 @@ const messages = ref<ChatMsg[]>([])
 const input = ref('')
 const loading = ref(false)
 const scrollRef = ref<HTMLElement>()
+
+// ===== 参考来源展开 + 行内引用联动 =====
+// 用 `${消息id}-${来源下标}` 作键，一条回复内的多个条目可各自独立展开
+const openSources = ref<Set<string>>(new Set())
+function srcKey(m: ChatMsg, i: number) {
+  return `${m.id}-${i}`
+}
+function isSourceOpen(m: ChatMsg, i: number) {
+  return openSources.value.has(srcKey(m, i))
+}
+function toggleSource(m: ChatMsg, i: number) {
+  const k = srcKey(m, i)
+  const next = new Set(openSources.value)
+  next.has(k) ? next.delete(k) : next.add(k)
+  openSources.value = next
+}
+
+/** 点击正文里的行内引用角标 [n]：展开第 n 条来源（sources[n-1]）并滚动到它 */
+function onCite(m: ChatMsg, n: number) {
+  const i = n - 1
+  if (!m.sources || !m.sources[i]) return
+  const k = srcKey(m, i)
+  const next = new Set(openSources.value)
+  next.add(k)
+  openSources.value = next
+  nextTick(() => {
+    document.querySelector(`[data-src-key="${k}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
+/** 时间显示：后端 LocalDateTime 形如 2026-09-12T13:35:18 */
+function fmtTime(v?: string) {
+  if (!v) return ''
+  return v.replace('T', ' ').slice(0, 19)
+}
+
+/** 是否为注入防护拦截（与「相似度过低」的拒答区分展示） */
+function isGuardBlock(m: ChatMsg) {
+  return (m.rejectReason || '').startsWith('injection-')
+}
+
+/**
+ * 提交消息级反馈（数据飞轮入口）。
+ * 点踩时可选填原因 —— 「答非所问」和「信息过时」对应完全不同的补救动作，
+ * 光有一个 👎 说明不了问题。
+ */
+async function onFeedback(m: ChatMsg, fb: 1 | 2) {
+  if (!m.messageId || m.feedback) return
+  let comment = ''
+  if (fb === 2) {
+    try {
+      const r = await ElMessageBox.prompt('可以补充说明哪里不对吗？（可留空）', '反馈', {
+        confirmButtonText: '提交',
+        cancelButtonText: '取消',
+        inputPlaceholder: '例如：答非所问 / 信息过时 / 漏了关键条件',
+        inputValue: ''
+      })
+      comment = (r as { value?: string }).value || ''
+    } catch {
+      return // 用户取消
+    }
+  }
+  try {
+    await submitMessageFeedback(m.messageId, fb, comment || undefined)
+    m.feedback = fb
+    ElMessage.success(fb === 1 ? '感谢反馈！' : '已记录，我们会尽快补充相关知识')
+  } catch {
+    // 拦截器已统一提示
+  }
+}
 
 // 会话 id 持久化到 localStorage：刷新/重进页面沿用同一条会话（登录用户后端还会按 userId 复用）
 function loadConvId(): number | null {
@@ -418,6 +579,11 @@ function handleSse(obj: any, ai: ChatMsg) {
     ai.fromCache = !!obj.fromCache
     ai.sources = obj.sources || []
     ai.intentCategory = obj.intentCategory
+    ai.rejected = !!obj.rejected
+    ai.rejectReason = obj.rejectReason || ''
+    ai.messageId = obj.messageId ?? undefined
+    ai.lowConfidence = !!obj.lowConfidence
+    ai.maxScore = obj.maxScore ?? null
     ai.streaming = false
     if (obj.conversationId != null) {
       conversationId.value = obj.conversationId
@@ -608,7 +774,10 @@ async function viewHistory(conv: Conversation) {
       else if (m.senderType === 'AGENT') role = 'agent'
       pushMsg(role, m.content, {
         fromCache: m.fromCache === 1,
-        intentCategory: m.intentCategory
+        intentCategory: m.intentCategory,
+        // 历史回放要把已评状态带出来，否则用户会以为自己的反馈丢了
+        messageId: m.senderType === 'AI' ? m.id : undefined,
+        feedback: m.senderType === 'AI' && m.feedback ? m.feedback : undefined
       })
     }
     if (msgs.length === 0) {
@@ -939,6 +1108,12 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
 }
 
+.sources-hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: #9aa0ac;
+}
+
 .source-item {
   padding: 8px 0;
   border-top: 1px dashed #e5e8f0;
@@ -953,6 +1128,28 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.source-head:hover {
+  background: #eef2ff;
+}
+
+/* 引用序号徽标：与正文里的 [n] 一一对应 */
+.source-badge {
+  flex-shrink: 0;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: #4c6fff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
 }
 
 .source-title {
@@ -966,6 +1163,148 @@ onBeforeUnmount(() => {
 .source-score {
   font-size: 12px;
   color: var(--el-color-primary);
+}
+
+.source-caret {
+  font-size: 13px;
+  color: #9aa0ac;
+  transition: transform 0.2s;
+}
+
+.source-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.source-item.is-open {
+  background: #f2f5ff;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* 展开后的「原条目」：条目 ID / 更新时间 / 来源链接 + 逐字原文 */
+.source-detail {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #dfe4f2;
+}
+
+.source-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: #7a8090;
+  margin-bottom: 6px;
+}
+
+.source-meta a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+
+.source-meta a:hover {
+  text-decoration: underline;
+}
+
+.source-file {
+  font-size: 12px;
+  color: #7a8090;
+  margin-bottom: 6px;
+}
+
+.source-content {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #eef0f6;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+/* 拒答：给明确的转人工出口 */
+.answer-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff8f0;
+  border: 1px solid #ffe0bf;
+}
+
+.answer-cta-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #b57100;
+}
+
+/* 安全策略拦截：用红色系与「资料不足」的橙色区分开 */
+.answer-cta.is-guard {
+  background: #fff1f1;
+  border-color: #ffd0d0;
+}
+.answer-cta.is-guard .answer-cta-text {
+  color: #c0392b;
+}
+
+/* 消息级反馈（👍/👎）*/
+.msg-feedback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.fb-label {
+  margin-right: 2px;
+}
+
+.fb-btn {
+  border: 1px solid #e4e7ed;
+  background: #fff;
+  border-radius: 14px;
+  padding: 1px 9px;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.fb-btn:hover:not(:disabled) {
+  border-color: var(--el-color-primary);
+  background: #f2f5ff;
+}
+
+.fb-btn.is-on {
+  border-color: var(--el-color-primary);
+  background: #eef2ff;
+}
+
+.fb-btn:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.fb-done {
+  color: var(--el-color-primary);
+}
+
+/* 低置信：弱提示，不打断阅读 */
+.answer-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #9a7b3f;
 }
 
 .chat-input-wrap {

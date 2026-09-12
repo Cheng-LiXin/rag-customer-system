@@ -104,9 +104,9 @@ const rules: FormRules = {
 }
 
 const demoAccounts = [
-  { label: '管理员', username: 'admin', password: 'admin123' },
-  { label: '客服', username: 'agent', password: 'agent123' },
-  { label: '用户', username: 'user', password: 'user123' }
+  { label: '管理员', username: 'admin', password: 'Admin@Ysu2026' },
+  { label: '客服', username: 'agent', password: 'Agent@Ysu2026' },
+  { label: '用户', username: 'user', password: 'User@Ysu2026' }
 ]
 
 function fill(acc: { username: string; password: string }) {

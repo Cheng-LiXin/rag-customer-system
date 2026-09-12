@@ -6,20 +6,40 @@ export interface PageResult<T> {
 }
 
 export interface Source {
+  /** 引用序号（1 基）：正文中的行内标记 [n] 指向 sources[n-1] */
+  index?: number
   chunkId?: string
   title?: string
   category?: string
   content?: string
   score?: number | null
+  /** 来源文件的干净标题（后端 knowledge_chunk.source_title） */
+  sourceTitle?: string
+  /** 来源文件的官方链接 */
+  sourceUrl?: string
+  /** 知识条目最近更新时间 */
+  updateTime?: string
 }
 
 export interface ChatAnswer {
   answer: string
   fromCache: boolean
   conversationId?: number | null
+  /** 本次机器人回答在 message 表的 id（提交 👍/👎 用） */
+  messageId?: number | null
   sources?: Source[]
   intentCategory?: string
   createdAt?: string
+  /** 是否被拒答（相似度过低或命中注入防护）—— 前端据此展示「转人工客服」入口 */
+  rejected?: boolean
+  rejectReason?: string
+  /** 低置信：答案照给，但提示可转人工核实 */
+  lowConfidence?: boolean
+  /** 本次检索最高相似度（融合前向量池 top-1 余弦） */
+  maxScore?: number | null
+  retrievalMode?: string
+  /** 分阶段耗时（毫秒）：retrieveMs / generateMs / totalMs / ttftMs */
+  timings?: Record<string, number>
 }
 
 export interface KnowledgeCategory {
@@ -105,6 +125,10 @@ export interface Message {
   fromCache?: number
   messageType?: string
   status?: number
+  /** AI 消息反馈：0-未评 1-有帮助 2-没帮助 */
+  feedback?: number
+  feedbackTime?: string
+  feedbackComment?: string
   createTime?: string
 }
 

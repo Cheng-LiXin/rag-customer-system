@@ -79,6 +79,24 @@ const router = createRouter({
           meta: { roles: ['ROLE_ADMIN'], title: '违禁词管理' }
         },
         {
+          path: 'guard',
+          name: 'guard',
+          component: () => import('@/views/admin/Guard.vue'),
+          meta: { roles: ['ROLE_ADMIN'], title: '安全防护' }
+        },
+        {
+          path: 'retrieval',
+          name: 'retrieval',
+          component: () => import('@/views/admin/Retrieval.vue'),
+          meta: { roles: ['ROLE_ADMIN'], title: '检索策略' }
+        },
+        {
+          path: 'unresolved',
+          name: 'unresolved',
+          component: () => import('@/views/admin/Unresolved.vue'),
+          meta: { roles: ['ROLE_ADMIN'], title: '未解决问题' }
+        },
+        {
           path: 'log',
           name: 'log',
           component: () => import('@/views/admin/Log.vue'),

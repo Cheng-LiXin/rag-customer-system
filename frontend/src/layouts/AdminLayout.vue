@@ -31,6 +31,18 @@
           <el-icon><Warning /></el-icon>
           <span>违禁词管理</span>
         </el-menu-item>
+        <el-menu-item v-if="auth.isAdmin" index="/admin/guard">
+          <el-icon><Lock /></el-icon>
+          <span>安全防护</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.isAdmin" index="/admin/retrieval">
+          <el-icon><Aim /></el-icon>
+          <span>检索策略</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.isAdmin" index="/admin/unresolved">
+          <el-icon><QuestionFilled /></el-icon>
+          <span>未解决问题</span>
+        </el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/admin/log">
           <el-icon><Document /></el-icon>
           <span>操作日志</span>
@@ -89,7 +101,10 @@ import {
   DataLine,
   Service,
   ArrowDown,
-  Warning
+  Warning,
+  Lock,
+  Aim,
+  QuestionFilled
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 
