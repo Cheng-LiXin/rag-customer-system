@@ -2,7 +2,7 @@
 # 把本机 MySQL 的 rag_customer 导出为容器初始化脚本（批次 C）
 # -----------------------------------------------------------------------------
 # 用途：让「Compose 全栈」起来后数据与你现在本机跑的完全一致 ——
-#       尤其是知识库那 164 条片段与它们在本机 MySQL 里的状态，不必重新导入。
+#       尤其是知识库那 159 条片段与它们在本机 MySQL 里的状态，不必重新导入。
 #
 # 产物：tools/docker/initdb/01_rag_customer.sql
 #       该目录被 compose 挂到 MySQL 容器的 /docker-entrypoint-initdb.d，
@@ -16,7 +16,7 @@
 #   要重新初始化：docker compose --profile full down
 #                 docker volume rm rag-customer-system_mysql-data   # ★ 只删 MySQL 卷
 #                 docker compose --profile full up -d
-#   千万不要用 `down -v` 全清 —— 那会连 pg-data（152 条向量）一起删掉。
+#   千万不要用 `down -v` 全清 —— 那会连 pg-data（159 条向量）一起删掉。
 # =============================================================================
 param(
     [string]$MysqlDumpExe = "D:\mysql-8.4.11-winx64\bin\mysqldump.exe",
