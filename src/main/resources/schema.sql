@@ -257,6 +257,26 @@ CREATE TABLE `operation_log` (
     KEY `idx_create_time` (`create_time`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '操作日志表';
 
+-- ---------------------------------------------------------------------
+-- 13. 注入防护审计事件表（批次 B）
+-- ---------------------------------------------------------------------
+DROP TABLE IF EXISTS `guard_event`;
+CREATE TABLE `guard_event` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `layer`       VARCHAR(16)  NOT NULL COMMENT '命中层：input/context/output',
+    `rule_id`     VARCHAR(64)  DEFAULT NULL COMMENT '命中的规则 ID',
+    `action`      VARCHAR(16)  NOT NULL COMMENT '动作：BLOCK 拦截 / LOG 仅记录',
+    `question`    VARCHAR(500) DEFAULT NULL COMMENT '触发本次问答的用户问题',
+    `chunk_id`    VARCHAR(64)  DEFAULT NULL COMMENT '上下文层命中时被污染的知识片段 chunk_id',
+    `hit_text`    VARCHAR(500) DEFAULT NULL COMMENT '命中处上下文（前后各约 40 字）',
+    `username`    VARCHAR(50)  DEFAULT NULL COMMENT '当前登录用户名（游客为 NULL）',
+    `ip`          VARCHAR(64)  DEFAULT NULL COMMENT '客户端 IP',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_layer` (`layer`),
+    KEY `idx_create_time` (`create_time`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '注入防护审计事件';
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =====================================================================
@@ -283,4 +303,5 @@ INSERT INTO `sys_role_permission` (`role_id`, `permission_id`) VALUES
     (3, 3);
 
 -- 初始用户：由应用启动时 DataInitializer 重建（账号ID走 sys_id_seq 分配：admin=130001、
--- agent=120001、user=110001，密码 admin123/agent123/user123，BCrypt 加密），此处不再预置。
+-- agent=120001、user=110001）。密码默认 Admin@Ysu2026/Agent@Ysu2026/User@Ysu2026，
+-- 可用 DEMO_ADMIN_PASSWORD 等环境变量覆盖，BCrypt 加密。此处不再预置。
