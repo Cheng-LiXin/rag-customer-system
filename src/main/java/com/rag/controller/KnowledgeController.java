@@ -7,6 +7,9 @@ import com.rag.dto.KnowledgeChunkRequest;
 import com.rag.dto.PageResult;
 import com.rag.entity.KnowledgeCategory;
 import com.rag.entity.KnowledgeChunk;
+import com.rag.retrieve.RetrievalResult;
+import com.rag.retrieve.Retriever;
+import com.rag.retrieve.RetrieverFactory;
 import com.rag.service.DocumentChunker;
 import com.rag.service.DocumentParser;
 import com.rag.service.KnowledgeService;
@@ -15,6 +18,7 @@ import com.rag.util.Result;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.ai.document.Document;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,6 +51,47 @@ public class KnowledgeController {
     private final DocumentParser documentParser;
     private final DocumentChunker documentChunker;
     private final SegmentTitleGenerator segmentTitleGenerator;
+    private final RetrieverFactory retrieverFactory;
+
+    // ==================== 检索预览（评估用） ====================
+
+    /**
+     * 检索预览：直接返回指定检索模式的 top-K 结果，供离线评估量 Recall@K / MRR。
+     *
+     * <p><b>为什么不复用 {@code /api/chat/ask} 的 sources</b>：那是**喂给答案生成器**的片段
+     * （{@code rag.top-k=3}），而 Recall@5 是**检索层**指标。两者刻意解耦 ——
+     * 为凑指标把答案路径的 top-k 提到 5，会把多余片段塞进抽取池、污染已经调好的答案质量。
+     *
+     * <p>本接口在类级 {@code @PreAuthorize("hasRole('ADMIN')")} 之下，不对公众开放。
+     *
+     * @param mode vector / bm25 / rrf / rerank；不传则用当前生效模式
+     */
+    @GetMapping("/chunk/retrieve-preview")
+    public Result<List<Map<String, Object>>> retrievePreview(@RequestParam("q") String query,
+                                                             @RequestParam(defaultValue = "5") int topK,
+                                                             @RequestParam(required = false) String mode) {
+        int k = Math.min(Math.max(topK, 1), 50);
+        Retriever retriever = (mode == null || mode.isBlank())
+                ? retrieverFactory.current()
+                : retrieverFactory.byMode(mode);
+        RetrievalResult result = retriever.retrieve(query, k);
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        int index = 1;
+        for (Document doc : result.getDocuments()) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("index", index++);
+            item.put("chunkId", doc.getMetadata() == null ? null : doc.getMetadata().get("chunk_id"));
+            item.put("title", doc.getMetadata() == null ? null : doc.getMetadata().get("title"));
+            item.put("category", doc.getMetadata() == null ? null : doc.getMetadata().get("category"));
+            item.put("score", RetrievalResult.similarityOf(doc));
+            item.put("mode", result.getMode());
+            String content = doc.getContent() == null ? "" : doc.getContent();
+            item.put("contentPreview", content.length() <= 120 ? content : content.substring(0, 120));
+            out.add(item);
+        }
+        return Result.success(out);
+    }
 
     // ==================== 知识片段 ====================
 

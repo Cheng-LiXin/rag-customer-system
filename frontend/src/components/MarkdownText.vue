@@ -1,5 +1,6 @@
 <template>
-  <div class="md-body" v-html="html"></div>
+  <!-- 用事件委托处理行内引用角标点击：气泡里可能有很多个 [n]，逐个绑定监听不划算 -->
+  <div class="md-body" v-html="html" @click="onClick"></div>
 </template>
 
 <script setup lang="ts">
@@ -12,14 +13,52 @@ import DOMPurify from 'dompurify'
  * marked 负责解析（GFM + 单换行即断行，适合聊天回复），
  * DOMPurify 消毒，避免 AI 输出中的 <script>/on* / javascript: 造成 XSS。
  * 调用方自行决定哪些消息走 Markdown（一般只对机器人正文使用）。
+ *
+ * 行内引用：后端在答案正文的每个原文句尾追加 [n]（n 指向本次响应的 sources[n-1]）。
+ * 这里用 marked 的 inline 扩展把它变成可点击的 <sup class="cite" data-cite="n">，
+ * 由父组件监听 cite 事件去展开对应的参考来源条目。
+ * 注意：扩展必须在 tokenizer 层拦截 —— 若等渲染完 HTML 再正则替换，会误伤代码块与属性值。
  */
 const props = defineProps<{ text: string }>()
+const emit = defineEmits<{ (e: 'cite', n: number): void }>()
+
+marked.use({
+  extensions: [
+    {
+      name: 'cite',
+      level: 'inline',
+      start(src: string) {
+        return src.indexOf('[')
+      },
+      tokenizer(src: string) {
+        const m = /^\[(\d{1,2})\]/.exec(src)
+        if (m) {
+          return { type: 'cite', raw: m[0], n: Number(m[1]) }
+        }
+        return undefined
+      },
+      renderer(token: any) {
+        return `<sup class="cite" data-cite="${token.n}">${token.n}</sup>`
+      }
+    }
+  ]
+})
 
 const html = computed(() => {
   const src = props.text || ''
   const raw = marked.parse(src, { gfm: true, breaks: true, async: false }) as string
-  return DOMPurify.sanitize(raw)
+  // data-cite 用于点击回查条目；DOMPurify 默认允许 sup 与 data-* 属性，显式声明以防配置收紧
+  return DOMPurify.sanitize(raw, { ADD_ATTR: ['data-cite'] })
 })
+
+function onClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest?.('sup.cite') as HTMLElement | null
+  if (!el) return
+  const n = Number(el.dataset.cite)
+  if (Number.isFinite(n) && n > 0) {
+    emit('cite', n)
+  }
+}
 </script>
 
 <style scoped>
@@ -29,6 +68,26 @@ const html = computed(() => {
   white-space: normal;
   font-size: inherit;
   line-height: inherit;
+}
+
+/* 行内引用角标：可点击，点击后由父组件展开对应参考来源 */
+.md-body :deep(sup.cite) {
+  display: inline-block;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #4c6fff;
+  font-size: 0.75em;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  vertical-align: super;
+}
+.md-body :deep(sup.cite:hover) {
+  background: #4c6fff;
+  color: #fff;
 }
 
 /* 段落 / 标题 */

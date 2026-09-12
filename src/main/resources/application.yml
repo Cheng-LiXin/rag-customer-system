@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: rag-customer-system
+  # 默认激活 local：加载 application-local.yml（真实口令/密钥，已 gitignore）。
+  # 部署时用环境变量 SPRING_PROFILES_ACTIVE 覆盖（如 prod），或改用纯环境变量注入。
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
 
   # ========== 文件上传（知识库批量导入）==========
   servlet:
@@ -87,6 +91,9 @@ rag:
   cache:
     # 热门问答缓存过期时间（秒），见 SRS 4.1.5
     ttl-seconds: 3600
+    # 缓存命中也写 message 表（默认开）。不写的话，热门的重复问题在库里没有机器人消息，
+    # 用户就无法对这条回答点赞/点踩 —— 数据飞轮的「点踩」入口对最热的问题反而失效。
+    persist-on-hit: true
   # 向量检索返回的 Top-K 数量（SRS 取 3）
   top-k: 3
   # 抽取式「宽松兜底」最低相似度门槛：最相似片段达到该相似度才允许对宽泛问法挑最相关句作答，否则回兜底（见 ChatServiceImpl.answer）
@@ -99,6 +106,88 @@ rag:
     max-groups: 4
     # 每个要点最多引用的原文句/表格行数
     max-per-group: 4
+  # 检索策略（批次 D 的可插拔检索）。四种模式对应四组对比实验：
+  #   vector 纯向量（默认，也是改造前的唯一路径）/ bm25 词面 / rrf 混合融合 / rerank 重排
+  retrieve:
+    mode: vector
+    # 混合与重排的候选池大小：先从各路取这么多，融合/重排后再截到 top-k
+    candidate-k: 20
+    bm25:
+      enabled: true
+      # BM25 标准参数（Cormack 常用值）
+      k1: 1.2
+      b: 0.75
+      # 中文用字符 2-gram（零依赖、可复现），详见 Bm25Index 类注释
+      gram: 2
+      # 语料懒刷新间隔：知识库变更后最多滞后这么久生效（管理端可手动重建）
+      rebuild-ms: 30000
+    rrf:
+      # RRF 的 k：Cormack 论文经典值 60，只用排名不用分数（BM25 分数无上界、跨 query 不可比）
+      k: 60
+      weight-vector: 1.0
+      weight-bm25: 1.0
+    rerank:
+      enabled: true
+      # 重排前的候选来自哪种检索：vector / bm25 / rrf
+      base-mode: rrf
+      url: https://api.siliconflow.cn/v1/rerank
+      model: BAAI/bge-reranker-v2-m3
+      top-n: 5
+      # 重排超时即降级为原序，绝不因重排失败让问答失败
+      timeout-ms: 3000
+      # 留空则复用 spring.ai.openai.embedding.api-key（同一个 SiliconFlow 账号）
+      api-key: ${SILICONFLOW_API_KEY:}
+  # 演示账号（DataInitializer 启动时创建；是否重置已有账号的密码见下）
+  demo:
+    # ★ 部署环境必须设 false —— 否则你在后台改过的密码会在下次重启被悄悄改回默认值，
+    #   而默认口令就写在仓库里，等于没有认证。docker profile 已默认设为 false。
+    reset-passwords: ${DEMO_RESET_PASSWORDS:true}
+    # ★ 这三个是**演示账号**口令，写在仓库里就意味着"谁看代码谁知道"。
+    #   本机演示够用；真上线前请用环境变量覆盖（DEMO_ADMIN_PASSWORD 等），
+    #   并在应用里改掉（登录 → 个人信息 → 账号安全 → 修改密码）。
+    #   密码可以是任意非空字符串（BCrypt 落库）；下方是明显的占位提示值，不是真实口令。
+    admin-password: ${DEMO_ADMIN_PASSWORD:Admin@Ysu2026}
+    agent-password: ${DEMO_AGENT_PASSWORD:Agent@Ysu2026}
+    user-password: ${DEMO_USER_PASSWORD:User@Ysu2026}
+  # 引用溯源：在答案正文每个原文句尾追加行内引用标记 [n]，n 指向本次响应的 sources[n-1]，
+  # 前端点击可展开原始知识条目（含条目 ID、更新时间、来源链接）。关闭后答案与旧版逐字节一致（回滚开关）。
+  citation:
+    inline: true
+  # 拒答与置信度。默认值由 150 题实测的**离线阈值扫描**定稿（tools/eval/threshold_sweep.py）：
+  #   常规题最高相似度 min 0.5552 / 超纲题 max 0.6629 —— 两组**有重叠**，不存在干净切点，
+  #   任何取值都是权衡。三个候选点的实测代价：
+  #     0.55 → 超纲拒答率 73.3%（**不达标**，文档要求 >90%） | 误拒 0%
+  #     0.59 → 超纲拒答率 96.7% ✓                           | 误拒 3.3%（4/120）
+  #     0.65 → 超纲拒答率 96.7% ✓（文档建议值）             | 误拒 12.5%（15/120）
+  #   取 0.59：优先满足文档硬指标，误拒代价连同具体题号记在 docs/评估报告.md。
+  answer:
+    # 最高相似度低于此值 → 直接拒答并引导转人工，且不调用大模型（0 = 关闭拒答）
+    reject-threshold: 0.59
+    # 相似度落在 [reject-threshold, 此值) → 照常作答但标记低置信，前端提示可转人工核实
+    low-confidence-threshold: 0.65
+    reject-message: "未找到相关信息，建议换个问法，或点击「转人工客服」由人工协助。"
+  # 注入防护（批次 B）。三层：input 输入层（用户问题本身是攻击载荷）/
+  # context 上下文层（检索到的知识片段里被埋了命令助手的句子）/ output 输出层（事实式污染承诺的外泄）。
+  # 每层动作：block 拦截 | log 只记录不拦截（演示「只记录」与灰度用）。
+  # 运行时开关优先级：Redis 键 rag:guard:enabled（管理端可切）→ 下面的 enabled（配置打底）。
+  security:
+    injection:
+      enabled: true            # 配置打底；管理端切换会写 Redis 覆盖它
+      runtime-switch: true     # false 时忽略 Redis 覆盖，只用配置值
+      input-level: block
+      context-level: block
+      output-level: block
+      # 是否再用大模型做二次判定：默认关（同模型判同文本是已知弱点，且加时延与不确定性）
+      llm-second-opinion: false
+  # 离线量化评估（tools/eval）：开启后才允许请求显式旁路 qa:cache（?noCache=true），
+  # 使重复问题每次都真实走检索+生成，否则会命中缓存导致 Recall/MRR/TTFT 全部失真。
+  # 默认 false —— 生产环境即使被传 noCache=true 也不旁路。评估时用环境变量打开：
+  #   $env:RAG_EVAL_BYPASS="true"   （Windows PowerShell，随后重启后端）
+  eval:
+    bypass-cache-enabled: ${RAG_EVAL_BYPASS:false}
+    # 是否允许用 X-Retrieval-Mode 请求头为**单次请求**指定检索模式（四组对比实验用）。
+    # 默认 false：生产环境不接受外部指定检索策略。
+    mode-override-enabled: ${RAG_EVAL_MODE_OVERRIDE:false}
   # 会话生命周期：自动会话连续无消息多久判定为「已结束」，定时任务扫描间隔
   session:
     timeout-minutes: 30
@@ -106,6 +195,27 @@ rag:
   # 人工会话：已分配客服的人工会话连续无消息多久自动结束（客服与用户均未说话）
   human:
     timeout-minutes: 10
+
+# ========== 可观测性（批次 F）==========
+# 指标端口单独开在 9091，且**不映射到宿主机**（见 docker-compose.yml）——
+# 只让容器网络内的 Prometheus 抓，避免 /actuator 出现在公网。
+management:
+  server:
+    port: 9091
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: rag-customer
+    distribution:
+      percentiles-histogram:
+        # 让 Prometheus 能算出 TTFT 的 p50/p95（histogram_quantile）
+        rag.qa.ttft: true
 
 # ========== 日志 ==========
 logging:
