@@ -41,5 +41,14 @@ public class Message {
     /** 状态：1-正常 0-撤回 */
     private Integer status;
 
+    /** AI 消息的用户反馈：0-未评 1-有帮助 2-没帮助（批次 E 数据飞轮入口） */
+    private Integer feedback;
+
+    /** 反馈时间 */
+    private LocalDateTime feedbackTime;
+
+    /** 点踩时可选填的原因（用于判断是"没召回"还是"答偏了"） */
+    private String feedbackComment;
+
     private LocalDateTime createTime;
 }
