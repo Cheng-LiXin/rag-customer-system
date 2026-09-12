@@ -106,6 +106,14 @@ services:
       DEMO_AGENT_PASSWORD: ${DEMO_AGENT_PASSWORD:-Agent@Ysu2026}
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-User@Ysu2026}
       DEMO_RESET_PASSWORDS: ${DEMO_RESET_PASSWORDS:-false}
+      # 离线评估开关（tools/verify_all.ps1 与 tools/eval/ 需要）。默认 false —— 生产行为与旧版一致，
+      # 即使请求带 noCache=true 也不旁路缓存。要跑「跑分红线断言 / 逐字保真 / 注入攻防」三项，
+      # 必须先把它置 true 再重建 backend（**只调容器里的应用读不到宿主机的新变量**）：
+      #   $env:RAG_EVAL_BYPASS='true'; $env:RAG_EVAL_MODE_OVERRIDE='true'
+      #   docker compose --profile full up -d backend
+      # 跑完记得去掉变量再重建一次，恢复生产行为。
+      RAG_EVAL_BYPASS: ${RAG_EVAL_BYPASS:-false}
+      RAG_EVAL_MODE_OVERRIDE: ${RAG_EVAL_MODE_OVERRIDE:-false}
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx768m}
     # 不映射到宿主机：对外只暴露 nginx 的 8081，/api 与 /ws 由 nginx 反代。
     # 这也顺带避开了 Windows 上 8080 被 winnat 排除端口占用的问题。

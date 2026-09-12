@@ -12,7 +12,7 @@
 #   pwsh tools\guard\demo_cleanup.ps1 -BaseUrl http://127.0.0.1:8081
 # =============================================================================
 param(
-    [string]$BaseUrl = "http://127.0.0.1:8080",
+    [string]$BaseUrl = "http://127.0.0.1:8081",
     [string]$AdminUser = "admin",
     [string]$AdminPass = $(if ($env:DEMO_ADMIN_PASSWORD) { $env:DEMO_ADMIN_PASSWORD } else { "Admin@Ysu2026" }),
     [string]$Prefix = "DEMO-",

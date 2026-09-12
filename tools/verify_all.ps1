@@ -16,9 +16,19 @@
 #   pwsh tools\verify_all.ps1 -SkipDemo      # 不动知识库（间接注入那几行会显示未拦截）
 #   pwsh tools\verify_all.ps1 -SkipBackend   # 只跑不需要后端的单元检查
 #   pwsh tools\verify_all.ps1 -Limit 8       # 跑分只跑前 8 题（快速冒烟）
+#
+# ⚠ 第 2~6 项（缓存旁路探针 / 跑分 / 逐字保真 / 攻防）要求后端带评估开关启动，
+#   否则「缓存旁路生效」会 FAIL 并跳过后续 —— 那是设计如此（跑分必须每次真实检索）。
+#   唯一工作环境是 Docker 全栈，开关要经 docker-compose 转发：
+#     $env:RAG_EVAL_BYPASS='true'; $env:RAG_EVAL_MODE_OVERRIDE='true'
+#     docker compose --profile full up -d backend
+#     pwsh tools\verify_all.ps1                     # 默认打 http://127.0.0.1:8081
+#     docker compose --profile full up -d backend   # 跑完去掉变量再重建，恢复生产行为
+#
+#   第 3 步载入的演示条目会在第 7 步自动清理（-SkipDemo 则既不载入也不清理）。
 # =============================================================================
 param(
-    [string]$BaseUrl = "http://127.0.0.1:8080",
+    [string]$BaseUrl = "http://127.0.0.1:8081",
     [string]$PythonPath = "D:\Program\Python\Anaconda3\envs\myenv\python.exe",
     [switch]$SkipDemo,
     [switch]$SkipUnit,
@@ -130,6 +140,15 @@ if (-not $SkipBackend -and $backendUp -and $PythonPath) {
         $guardOut | Select-String -Pattern "处置率|误杀率|有害内容泄露|未处置|被误杀" |
             ForEach-Object { Write-Host ("    " + $_.ToString().Trim()) -ForegroundColor DarkGray }
         Record "攻防样本符合预期" $guardOk $(if ($guardOk) { "见上方处置率/误杀率/泄露数" } else { "见上方漏放/泄露/误杀清单" })
+
+        # 演示条目用完必须清掉：毒片段留在库里会污染检索结果（旧版只 load 不 cleanup）。
+        # demo_cleanup 走 DELETE 接口，会连带删 PGVector 向量；库里没有 DEMO- 条目时也退出 0。
+        if (-not $SkipDemo) {
+            Section "7. 清理演示条目"
+            $cleanOut = pwsh -NoProfile -File tools\guard\demo_cleanup.ps1 -BaseUrl $BaseUrl 2>&1
+            $cleanOk = ($LASTEXITCODE -eq 0)
+            Record "演示条目已清理" $cleanOk $(($cleanOut | Select-String "已删除|无需清理|没有找到" | ForEach-Object { $_.ToString().Trim() }) -join "；")
+        }
     }
 } elseif (-not $SkipBackend) {
     Section "2-6. 需要后端的检查"

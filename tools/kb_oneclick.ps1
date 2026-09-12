@@ -29,7 +29,8 @@
   ./kb_oneclick.ps1 -Section 迎新入学须知
 
 .PARAMETER BackendUrl
-  正在运行的后端根地址（默认 http://localhost:8080）。注意：代码改动后 8080 若还是旧进程需先重启。
+  正在运行的后端根地址（默认 http://localhost:8081，即 Docker 全栈的 Web 入口）。
+  注意：改了代码/配置后必须 `docker compose --profile full up -d --build`，只 up -d 会继续跑旧镜像。
 .PARAMETER AdminUser / AdminPass
   管理员账号。口令默认取环境变量 DEMO_ADMIN_PASSWORD（与后端 application.yml 同名），
   未设置则用演示默认值 Admin@Ysu2026 —— 改了演示口令后设该环境变量即可，无需改脚本。
@@ -58,7 +59,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$BackendUrl = 'http://localhost:8080',
+    [string]$BackendUrl = 'http://localhost:8081',
     [string]$AdminUser = 'admin',
     [string]$AdminPass = $(if ($env:DEMO_ADMIN_PASSWORD) { $env:DEMO_ADMIN_PASSWORD } else { 'Admin@Ysu2026' }),
     [string]$PythonPath = 'D:\Program\Python\Anaconda3\envs\myenv\python.exe',

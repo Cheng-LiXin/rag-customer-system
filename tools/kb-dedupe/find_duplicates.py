@@ -128,7 +128,7 @@ def suggest_keep(group, chunks, protected):
 
 def main():
     ap = argparse.ArgumentParser(description="知识库近重复检测")
-    ap.add_argument("--base-url", default="http://127.0.0.1:8080")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8081")
     ap.add_argument("--admin-user", default="admin")
     ap.add_argument("--admin-pass",
                     default=os.environ.get("DEMO_ADMIN_PASSWORD", "Admin@Ysu2026"))

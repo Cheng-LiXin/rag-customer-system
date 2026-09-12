@@ -28,7 +28,9 @@ NO_CONTENT_MSG = "资料中没有相关内容，建议换个问法或补充关�
 # 行内引用标记 [n]（批次 A2 引入）。判分与逐字比对前都要先剥掉它。
 CITE_RE = re.compile(r"\[\d{1,2}\]")
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8080"
+# 唯一工作环境是 Docker 全栈，Web 入口在 8081（后端不映射到宿主机，
+# 8080 是本机 mvn spring-boot:run 时代的端口，已废弃）。
+DEFAULT_BASE_URL = "http://127.0.0.1:8081"
 
 GOLDEN_FIELDS = [
     "id", "type", "question", "gold_chunk_ids", "gold_source_urls",
