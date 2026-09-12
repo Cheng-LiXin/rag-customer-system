@@ -7,7 +7,7 @@
 - **版本锁定**：Spring AI 固定 `0.8.1`；JDK 17 + Maven；MyBatis-Plus `3.5.5`（逻辑删除 `@TableLogic`、`LambdaQueryWrapper`、`map-underscore-to-camel-case`）。
 - **AI 模型**：Embedding 用 SiliconFlow `BAAI/bge-m3`（1024 维，`pgvector.dimensions=1024`）；Chat 用 `deepseek-chat`。**DeepSeek 官方无 Embedding 接口**。
 - **Spring AI `Document`** 用三参构造 `Document(id, content, metadata)` 设向量 ID，无 builder。
-- **默认账号**：admin / agent / user，密码 **admin123 / agent123 / user123**（`DataInitializer` 每次启动重置密码并绑定角色）；角色返回带 `ROLE_` 前缀。重建后 id = **130001 / 120001 / 110001**（6 位账号号，见下「账号体系」）。
+- **默认账号**：admin / agent / user，密码 **`Admin@Ysu2026` / `Agent@Ysu2026` / `User@Ysu2026`**（可用 `DEMO_ADMIN_PASSWORD` 等环境变量覆盖）。角色返回带 `ROLE_` 前缀。重建后 id = **130001 / 120001 / 110001**（6 位账号号，见下「账号体系」）。**密码重置由 `rag.demo.reset-passwords` 控制**：本地开发默认 true（改坏了重启即恢复）；**docker/部署 profile 默认 false** —— 否则后台改过的口令会在重启时被改回默认值。⚠ 这三个口令写在仓库里，真上线前必须换掉（环境变量覆盖 + 应用内改密）。
 - **账号体系（6 位角色前缀账号号 + 自助注册 + 昵称限改 + 违禁词）**：`sys_user.id` = 前两位前缀（**11 用户 / 12 客服 / 13 管理员**）×10000 + 同前缀 4 位序号；`@TableId(type = IdType.INPUT)`，出号**统一走 `AccountNoService.nextId(prefix)`**（`@Transactional` 内 `IdSeqMapper` 对 `sys_id_seq` 行 `UPDATE curr=curr+1` 行锁分配，先 bump 后读，返回 `prefix*10000L+curr`），建号入口不留手写字面量：`DataInitializer`（demo 首启 110001/120001/130001）、`AuthController.register`（固定 `PREFIX_USER`=11）、`SysUserController.create`（按 roleIds 中**最高角色**定前缀：含 role1→13、否则含 role2→12、否则 11；id 只反映建号时最高角色，后续改角色不重写）。**自助注册**：`POST /api/auth/register`（SecurityConfig permitAll）手机号作账号（写现有 `username` 列 + `phone` 列，暂不接短信验证码），BCrypt 加密，`RegisterRequest` 带 `confirmPassword` 二次校验，昵称可选（空则默认「用户+手机尾号4位」且**不启动**限改计时），重复注册报「该手机号已注册」。**昵称 30 天限改**：`sys_user.nickname_updated_at` 记录最近改昵称时间；`AuthController.updateProfile` 仅 nickname 变化时校验（admin `SysUserController.update` 改他人昵称**不受限且不动时间戳**）；`profile()` 返回 `nicknameUpdatedAt/nicknameEditable/nicknameCooldownDays` 供前端禁用 + 倒计时。**违禁词屏蔽（资料提交，不拦聊天）**：`sys_banned_word(id, word UNIQUE, status)`；`BannedWordService.findBanned(text)` 取 status=1 词表做 substring 命中；在 register（昵称）、updateProfile（昵称/邮箱）、SysUserController.create/update（昵称）处强制拦截并给友好文案；admin CRUD 走 `BannedWordController`（`/api/admin/banned-word`，类级 `@PreAuthorize("hasRole('ADMIN')")`），前端 `admin/BannedWord.vue`。历史测试数据于 `tools/db/migration_account_v2.sql`（一次性）清空重建；**铁律：保留 guest=0 哨兵、id 保持纯数字、新用户一律走 `AccountNoService`、不在别处对 id 做前缀解析**（id 全链路按不透明 Long 用，经审计安全）。
 - **SSE** 返回 `Flux<String>`（非 `ServerSentEvent`），前端解析需兼容 `data:` 前缀与裸 JSON 两种分行。
 - **RAG 缓存**：键 `qa:cache:{MD5(问题)}`，TTL 默认 `3600s`；命中直接返回，未命中异步写回。
@@ -29,6 +29,17 @@
 - **客服名片接口**：`GET /api/conversation/{id}/customer` 返回会话归属客户的完整资料（userId/username/nickname/avatar/email/phone/province/city/identity/status/createTime；userId 为 0/null 时返回 `{guest:true,userId:0}`）。`Workbench.vue` 右侧 `aside.wb-profile` 客户名片卡展示头像/昵称/@用户名/身份标签/账号状态/地区/邮箱/手机号/账号ID/注册时间，游客会话显示游客兜底；当前活动会话收到新消息时自动刷新名片。
 - **个人信息页 / 会话归属展示**：`/profile` 为独立全屏页（自带顶栏返回、身份卡[头像/昵称/角色/注册日/账号状态/历史对话数]、基础资料 + 账号安全两栏）。`/auth/profile` 补充返回 `status`。`Conversation` 实体带 `@TableField(exist=false) userName`（非 DB 列），`ConversationController.page` 用 `sys_user.selectBatchIds` 回填昵称/用户名；`userId=0` 前端显示「游客」。
 
+- **引用溯源（批次 A）**：答案正文每个原文句尾的行内标记 `[n]` 由 **Java 在拼装阶段按句元的 `docIndex` 追加**（`ChatServiceImpl.cite()`，n 指向 `sources[n-1]`），**绝不让模型输出引用号** —— 这是"抽取式逐字保真"铁律的必然推论。`Source` 带 `index/sourceUrl/sourceTitle/updateTime`；`toSources` 与 `referenceFooter` 共用 `loadChunks()`（原先各查一遍库）。前端 `MarkdownText.vue` 用 marked **inline 扩展**把 `[n]` 渲染成可点 `sup.cite`（不能渲染完 HTML 再正则替换，会误伤代码块），`ChatHome.vue` 点击展开原条目并滚动定位。开关 `rag.citation.inline`（关掉即与旧版逐字节一致）。
+- **拒答与低置信（批次 A/D）**：`ChatServiceImpl.rejectPolicy` 在**检索之后、调模型之前**判定：最高相似度 < `rag.answer.reject-threshold` → 直接拒答并引导转人工，**不调大模型**；落在 `[reject-threshold, low-confidence-threshold)` → 照常作答但标 `lowConfidence`。拒答与兜底**都不入 `qa:cache`**。默认阈值 **0.59**（非文档建议的 0.65）：150 题实测常规题相似度下限 0.5552、超纲题上限 0.6629，**两组有重叠、不存在干净切点**；0.55 时超纲拒答率仅 73.3% 不达标、0.65 达标但误拒 15/120，0.59 取到 96.7% + 误拒 4/120。阈值由 `tools/eval/threshold_sweep.py` **离线扫描**定稿（拒答是 `score < T` 的纯函数，不必改配置重启去试）。被误拒的 4 道题题号记在 `docs/评估报告.md`。
+- **可插拔检索（批次 D）**：`com.rag.retrieve` 包 —— `Retriever` 接口 + `VectorRetriever/Bm25Retriever/HybridRrfRetriever/RerankRetriever` + `RetrieverFactory`（优先级：请求头 `X-Retrieval-Mode` → Redis `rag:retrieve:mode` → 配置 `rag.retrieve.mode`，未知模式回落 vector）。**核心不变量**：`RetrievalResult.maxVectorSimilarity` 固定取「**融合前**向量宽池 top-1 余弦」，拒答阈值与 `partial-min-score` 只读它 —— 保证四种模式下阈值语义一致，且 `mode=vector` 与改造前逐字节等价。BM25 用**字符 2-gram + 数字/英文整体保留**（不引 jieba/lucene，零依赖可复现；数字被 bigram 拆成 20/02/26 会糊掉）；RRF `k=60` 只用排名不用分数（BM25 分数无上界、跨 query 不可比）；reranker 走硅基流动 HTTP（复用 embedding 的 key，**超时/失败一律降级为原序**，绝不让重排失败导致问答失败）。⚠ **纯 BM25 模式下拒答阈值失效**（没有向量相似度可判）—— 实测超纲拒答率掉到 6.7%。
+- **评估口径（批次 D，最容易搞错的一点）**：**Recall@K 必须在检索层量**（ADMIN 接口 `/api/knowledge/chunk/retrieve-preview`，`run_eval.py --retrieval`），不能从 `/api/chat/ask` 的 sources 推 —— 后者只有 `rag.top-k=3` 条，那算的是 Recall@3。答案路径的 top-k 刻意不提：为凑指标提高它会把噪声片段塞进抽取池、污染已调好的答案质量。多跳题另算 `full_recall`（**两个来源都进 top-K** 才算），只看"命中其一"会严重高估。缓存旁路走 `?noCache=true` + `RAG_EVAL_BYPASS`（**跑分前必须先过 `probe_env.py` 确认旁路真的生效**，否则重复问题命中缓存、指标全是残留值）。
+- **注入防护三层（批次 B）**：`com.rag.guard` —— L1 输入层（检索前，扫用户问题）／L2 上下文层（检索后生成前，扫片段内容并记录被污染的 `chunk_id`）／L3 输出层（生成后，抽取式回答逐字引用原文，**事实式**污染承诺只能在这里兜住，与检索路径解耦）。规则一律「**意图词 + 对象词共现**」，**绝不单词匹配**（知识库正文里「保证」「全额」「打印」「录取」都是合法词）。运行时开关走 Redis `rag:guard:enabled`（管理端可切，切换动作另落 `operation_log`），命中落 `guard_event` 表。4 个提示词拼接点统一走 `PromptSanitizer` 包 `<question>`/`<content>` 标签。**不引入 LLM 二次判定**（同模型判同文本是已知弱点，且加时延与不确定性），留 `llm-second-opinion` 开关。演示与清理见 `docs/注入防护演示.md`。
+- **数据飞轮（批次 E）**：`message` 增 `feedback/feedback_time/feedback_comment`；新表 `unresolved_question`（`question_hash` 唯一键把重复提问**收敛累加** `hit_count`，`source` = 1兜底/2点踩/3拒答/4防护拦截）。记录点：`ChatServiceImpl.recordUnresolved`（三个自动来源）+ `MessageFeedbackController`（点踩）。反馈接口放 **`/api/message/**`（走认证）而不是 `/api/chat/**`**（后者 permitAll，挂那儿就得自证归属且可匿名刷），代价是游客不能反馈、前端对未登录隐藏按钮。**缓存命中也落库**（`rag.cache.persist-on-hit`，默认开）：否则热门的重复问题在库里没有机器人消息、用户根本没法点赞 —— 对最热的问题反而失效。`ChatAnswer.messageId` 必须用**本次**新建的消息 id（缓存里那份是上一次的，直接用会让用户给别人的旧回答点赞）。
+- **Docker 全栈一键起（批次 C）**：`docker-compose.yml` 用 **profile 隔离** —— `docker compose up -d` 只起依赖（本机开发的既有用法，行为不变），`docker compose --profile full up -d --build` 才起后端+前端+MySQL+PG+Redis（否则后端容器会和本机 8080 抢端口）。Web 入口 nginx 在 **8081**（避开 Windows 的 winnat 排除端口），MySQL 映射 **3307**（避本机 3306），后端**不映射到宿主机**。`frontend/nginx.conf` 里 **SSE 必须 `proxy_buffering off`**、`/ws/` 必须带 `Upgrade` 头。`application-docker.yml` 只改主机名与口令来源、**不含任何口令**。数据迁移走 `tools/docker/export-mysql.ps1`；初始化脚本目录见 `tools/docker/initdb/README.md`。⚠ **`docker compose down -v` 会连 pg-data 一起删**（向量全没、需重新向量化），只重建 MySQL 要用 `docker volume rm rag-customer-system_mysql-data`。
+- **可观测性（批次 F）**：actuator + micrometer，指标端口 `management.server.port=9091` **不映射宿主机**，只给容器网络内的 Prometheus 抓。业务指标 `rag.qa.answers{result}`（结局分布：answered/fallback/refused/blocked/cached）、`rag.qa.ttft`、`rag.guard.blocks{layer,rule}`、`rag.corpus.size`。Grafana 数据源与看板走 provisioning 自动加载（`tools/monitoring/`）。**actuator 路径要在 SecurityConfig 里放行**，否则 Prometheus 拿到 401。
+
+- **知识库去重（`tools/kb-dedupe/find_duplicates.py`）**：评估实测挖出「同一份文件的两个版本」——公文类知识库常见「通知 + 附件全文」的重复（实测：《学业预警工作实施细则》本体 149-153 与印发它的通知 222-226，正文一字不差）。判定必须用**文档级**而非片段级：只有当 A 文档的**大多数**片段都能在 B 里找到近重复时才判定同源。片段级包含度会大量误报（实测把「学科实力/ESI」vs「学位授权点」、「录取分数」vs「录取查询」都判成重复——同领域共享术语、短片段共享 URL 样板）。工具内含**评估集保护**：`golden_set.csv` 引用的 chunk 绝不会被删；删除走 `DELETE /api/knowledge/chunk/{id}`（连带删向量，直连库删行会留幽灵向量），且必须先 `--backup`。**删完必须重映射评估集里的 gold id**（实测影响 7 道题），再重跑 `verify_all.ps1`。
+
 ## 踩坑
 
 - **列举型问法漏召回 = 内容缺实体锚点（数据策展，非检索 bug）**：问「燕山大学都有哪些学院」回兜底、但「学院设置」能答（2026-09-05 实测修复）。探针（SiliconFlow BAAI/bge-m3 嵌入问法，`docker exec rag-postgres psql` 直查 `vector_store` 按 `embedding<=>'[...]'::vector` 排序比对多问法）证明：含 19 学院清单的片段在「学院设置」下排 **#1**，但只要问句带「燕山大学」锚点就跌到 **#44~50**——招生问答等满篇「燕山大学+学科/专业」的噪声片段（0.62~0.66）把真片段淹没；真片段原文以「学校设有…」开头、**全篇缺字面「燕山大学」**（靠文档语境省略主语）。修法：混合片段**按话题拆纯** + 权威句补全称主语，如 `学院设置：燕山大学设有研究生院和19个直属学院，即…`，相似度 0.57→0.76 稳居 top-1（忠实改写，未虚构）。**数据策展纪律：权威句带全称主语；一个片段一个话题**（KB 校验「152 全向量就绪」时发现记忆旧计数「203」与库不符——历史重导留 56 条逻辑删除，活跃数以 `COUNT(*) WHERE deleted=0` 为准）。
@@ -45,6 +56,15 @@
 - **SSE 把会话绑到 userId=0（游客）**：`/api/chat/stream` 返回 `Flux` 后事务在 **Reactor 线程**执行，`SecurityContextHolder`(ThreadLocal) 已不可达 → `ChatServiceImpl.resolveUserId()` 返回 0。修复：在 servlet 请求线程先 `resolveUserId()` 再把 userId 透传给 `persistExchange`/`ensureConversation`（不再在事务里解析），`ask` 同步路径同步改造为显式传参。连带好处：转人工时 `AgentService.resolveHumanConversation` 的 `isSameUser` 校验通过，可正常复用原 AI 会话而非另开新 HUMAN 会话。注：修复只作用于新会话，历史 userId=0 数据无法自动归属回用户。
 - **注册/资料相关 500「系统繁忙」可能不是后端 bug，是请求编码问题**：Windows PowerShell 直接 `curl --data-raw '{"nickname":"垃圾"}'` 会把中文按 **GBK** 字节发送 → Jackson `Invalid UTF-8 start byte` → 业务异常被兜底成「系统繁忙」。正确冒烟姿势：用 `[System.IO.File]::WriteAllText(path, json, UTF8无BOM)` 落 UTF-8 文件再 `curl --data-binary @file`。另注意：这些接口的**业务错误（重复注册/违禁词/30 天限改）走 HTTP 200 + body `code:500`**（前端拦截器已统一 `ElMessage` 提示）。
 - **改 `sys_user.id` 后**：JWT subject 仍是 **username**（手机号/账号名），登录期用户 id 一律经 `/auth/me` 或 DB 现查，故 6 位账号号对既有鉴权/会话/Redis 键透明；历史会话归属 userId=0 的数据不会自动回填。`DataInitializer` 每次启动重置 demo 密码但**不重建**已存在的 demo 行（迁移后再首启只补角色绑定）。
+- **GFM 表格会丢弃超出表头列数的单元格** —— 表格的引用号 `[n]` 若直接接在最后一行末尾，会被当成多出来的第 N+1 列**静默吃掉**（不报错、渲染出来就是没有）。必须**另起一段**单独放。已留回归脚本 `frontend/scripts/check-citations.mjs`（`node scripts/check-citations.mjs`，7 项断言），这个 bug 就是它抓出来的。
+- **本机 Docker Hub 直连不通**（`registry-1.docker.io` 超时），但 **DaoCloud 镜像源可达**。拉基础镜像的办法：`docker pull docker.m.daocloud.io/library/<name>:<tag>` 再 `docker tag` 回官方名 —— **不必改 daemon.json、不必重启 Docker**。注意该源有**白名单**，`justbamboo/jmeter`、`qainsights/jmeter` 这类小众镜像不在其中（JMeter 改为下载 Apache 官方 zip 到 `tools/loadtest/.jmeter/`，本机有 JDK 17 即可跑）。
+- **Spring Boot 管理端口不自动放行 actuator**：`management.server.port=9091` 之后，`/actuator/prometheus` 仍走主过滤器链 → Prometheus 拿到 **401**。要在 `SecurityConfig` 的 permitAll 里显式加 `/actuator/health|info|prometheus`（该端口不映射宿主机，放行是安全的）。
+- **SSE 是"传输层流式"而非"逐字流式"**：`ChatServiceImpl.stream()` 用 `Flux.fromIterable(slice(answer,18))` **没有 `delayElements`**，所以答案在 Flux 创建前已算完、分片之间也没有间隔 —— 客户端收到的是一串几乎同时到达的事件，打字机效果实际由前端渲染决定。因此：① TTFT ≈ 全链路耗时（报告口径已如实声明）；② 用"首片 vs 末片到达时间差"**测不出 nginx 缓冲**（本来就没有时间差）。要验缓冲只能直接核 `nginx.conf` 与 `nginx -t`。
+- **PowerShell 里给 Python 传含数字的路径会踩转义**：`"...\2026..."` 中的 `\2` 被当转义（实测把 `\20260912-...` 变成了 `\x8260912-...`）。把路径作为**独立参数**传（`& $PY script.py $path` 里读 `sys.argv[1]`），别内插进 here-string。
+- **`eval_common.http_json` 传了 payload 就强制用 POST** —— 想发 DELETE 必须显式传 `method="DELETE"`，否则会把 POST 打到 DELETE 路由上，后端兜底成一句含糊的「系统繁忙，请稍后重试」，从错误信息完全看不出是方法错了（实测删知识片段时 5/5 全失败，查了一轮才发现）。
+- **改配置/代码后只 `docker compose up -d` 不 `--build`，容器跑的还是旧镜像**。实测：改了 `application.yml`（新增 `rag.demo.*`）后只 `up -d`，容器里的应用**完全没有新配置**，`@Value` 取了代码里的兜底默认值 → 行为看起来"莫名其妙没生效"。排查了一轮才发现是镜像没重建。**改代码或配置一律 `docker compose --profile full up -d --build`。**
+- **改了演示账号口令，别忘了同步评估工具的默认值**：`run_eval.py --retrieval` 要 ADMIN 登录，它的 `--admin-pass` 默认值写死在脚本里 → 改完口令后四组检索评估会**静默登录失败**（摘要直接不打印）。已改为读环境变量 `EVAL_ADMIN_PASSWORD`。
+- **删知识片段只能走 `DELETE /api/knowledge/chunk/{id}`**（`KnowledgeServiceImpl.deleteChunk` 会同步 `removeVector`）。直连 MySQL `DELETE` 行会留下**幽灵向量**：检索仍能命中一个库里已不存在的 `chunk_id`，界面上完全看不出来。`demo_cleanup.ps1` 与 `find_duplicates.py` 都是走接口删。
 
 ## 待办
 
@@ -54,6 +74,21 @@
 
 - 后端：`mvn clean compile -DskipTests`（需 MySQL / PostgreSQL / Redis 已启动并配置 `DEEPSEEK_API_KEY`）
 - 前端：`cd frontend && npm run build`
+- 单元测试：`mvn test -Dtest=InjectionGuardTest,IntentServiceTest`（16 用例，纯 JUnit 无 Spring 上下文）
+
+## 验证与评估工具链（改完代码先跑这个）
+
+```powershell
+pwsh tools\verify_all.ps1              # 一条命令跑完 6 项检查 + PASS/FAIL 汇总表
+pwsh tools\verify_all.ps1 -SkipDemo    # 不动知识库
+pwsh tools\verify_all.ps1 -SkipBackend # 只跑不需后端的单元检查
+```
+
+覆盖：防护规则单元测试 / 行内引用渲染回归 / **缓存旁路探针** / 跑分红线断言 / 逐字保真 / 注入攻防 30 样本。
+**这套断言做过负向验证**（把阈值抬到不可能达标的值，确认它真的会 FAIL）—— 永远绿的验证脚本等于没有。
+
+评估相关脚本都在 `tools/eval/`，用法与口径见其 `README.md`；压测在 `tools/loadtest/`。
+改动检索/生成/防护后，**必须重跑** `verify_all.ps1` 并把结果记进 `docs/评估报告.md`。
 
 ## 知识数据流水线（采集 → 切块 → 导入）
 

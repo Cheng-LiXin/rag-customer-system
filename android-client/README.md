@@ -80,7 +80,7 @@ gradlew :composeApp:assembleDebug
 | 历史对话回放 | 提示登录 | ✅ |
 | 个人资料（省市·身份·邮箱·昵称30天限改·改密码） | 提示登录 | ✅ |
 
-账号：可用 Web 端注册（手机号自助注册），或 demo 账号 user/user123。
+账号：可用 Web 端注册（手机号自助注册），或 demo 账号 user/User@Ysu2026。
 
 ## 交互要点
 

@@ -67,5 +67,17 @@ tools/kb-import/*.cache
 *.bak
 *.swp
 
+# 压测：自动下载的 JMeter 与跑分产物（体积大，不入库）
+tools/loadtest/.jmeter/
+tools/loadtest/results/
+tools/loadtest/report/
+tools/loadtest/*.jtl
+
+# 离线评估跑分产物（可由脚本重跑复现）
+tools/eval/results/
+
+# 容器初始化用的 MySQL 数据导出（含真实业务数据，且可由 export-mysql.ps1 重新生成）
+tools/docker/initdb/*.sql
+
 # Maven wrapper 本地
 .mvn/wrapper/maven-wrapper.jar

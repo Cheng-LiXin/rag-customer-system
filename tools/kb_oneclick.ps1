@@ -31,7 +31,8 @@
 .PARAMETER BackendUrl
   正在运行的后端根地址（默认 http://localhost:8080）。注意：代码改动后 8080 若还是旧进程需先重启。
 .PARAMETER AdminUser / AdminPass
-  管理员账号（DataInitializer 每次启动把密码重置为默认 admin123，通常无需改）。
+  管理员账号。口令默认取环境变量 DEMO_ADMIN_PASSWORD（与后端 application.yml 同名），
+  未设置则用演示默认值 Admin@Ysu2026 —— 改了演示口令后设该环境变量即可，无需改脚本。
 .PARAMETER PythonPath
   本机真 Python 全路径（系统 PATH 的 python 是商店占位符）。默认 anaconda env。
 .PARAMETER Collect
@@ -59,7 +60,7 @@
 param(
     [string]$BackendUrl = 'http://localhost:8080',
     [string]$AdminUser = 'admin',
-    [string]$AdminPass = 'admin123',
+    [string]$AdminPass = $(if ($env:DEMO_ADMIN_PASSWORD) { $env:DEMO_ADMIN_PASSWORD } else { 'Admin@Ysu2026' }),
     [string]$PythonPath = 'D:\Program\Python\Anaconda3\envs\myenv\python.exe',
     [switch]$Collect,
     [string]$Section = '',
