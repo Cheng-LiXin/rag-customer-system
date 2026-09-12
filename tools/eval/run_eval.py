@@ -58,7 +58,7 @@ RESULT_FIELDS = [
 def ask_stream(base_url, question, no_cache=True, timeout=120):
     """GET /api/chat/stream，返回 (data, wall_ms, ttft_ms)。data 取 end 事件的内容。
 
-    SSE 每行可能是 `data:{...}` 或裸 JSON（CLAUDE.md 明确要求兼容两种），这里统一处理。
+    SSE 每行可能是 `data:{...}` 或裸 JSON（后端两种都可能发出），这里统一处理。
     """
     url = "%s/api/chat/stream?message=%s" % (base_url.rstrip("/"), urllib.parse.quote(question))
     if no_cache:

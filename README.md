@@ -2,7 +2,7 @@
 
 基于 **RAG（检索增强生成）** 的燕山大学智能客服系统：用户向机器人提问，系统先对知识库做向量检索、再交由大模型**只做抽取/组织、不自由发挥**地生成结构化回答；回答不上时可**转人工客服**（WebSocket + 最少负载分配）由真人接管。配套管理后台（知识库/会话/工单/用户/违禁词/操作日志/数据统计）与客服工作台。
 
-开发期深度约定、踩坑与运营方法论见 `CLAUDE.md` 与 `docs/知识库运营手册.md`。
+知识库数据的采集 / 切块 / 导入流程见下文「知识数据流水线」，各环节工具的用法见对应的 `tools/*/README.md`。
 
 ## 功能总览
 
@@ -24,6 +24,27 @@
 | 系统管理 F08 | 用户 / 角色 / 权限 RBAC、操作日志（AOP 审计） |
 | 账号与合规（扩展） | 手机号自助注册、6 位角色前缀账号号、密码 BCrypt、昵称 30 天限改、违禁词屏蔽 |
 | 客户画像（扩展） | 个人资料省/市/身份，客服工作台客户名片、会话归属实时 join 昵称 |
+
+## 实测指标
+
+下列数字全部由 `tools/eval/`（离线量化评估）与 `tools/loadtest/`（JMeter 压测）脚本自动产出，
+可从明细 CSV 逐条追溯，**不是手工填的**。
+
+| 指标 | 目标 | 实测 | 口径 |
+| ---- | ---- | ---- | ---- |
+| Recall@5 | > 85% | **97.50%** | 检索层测量，四种检索模式全部 > 85% |
+| Faithfulness | > 0.85 | **1.0000** | 120/120 题答案完全忠实于原文 |
+| 超纲拒答率 | > 90% | **96.67%** | 30 道超纲题拒掉 29 道 |
+| 首字时延 TTFT | < 1.5s | p50 **995ms** / p95 **1422ms** | 冷路径；缓存命中路径 p95 仅 **22ms** |
+
+工程红线同样达标：**正常题误拒率 0%**、**常规兜底率 0.83%**、**逐字保真 1.0000**、
+**注入攻防处置 18/18 · 有害内容泄露 0 · 误杀 0/12**。
+
+一键复验：`pwsh tools\verify_all.ps1` —— 6 项检查 + PASS/FAIL 汇总表（含负向验证，不是永远绿的脚本）。
+
+> **评估口径**：Recall@K 在**检索层**测量（`/api/knowledge/chunk/retrieve-preview`），
+> 不从 `/api/chat/ask` 的 `sources` 反推 —— 后者只返回 `rag.top-k=3` 条，那算的是 Recall@3。
+> 多跳题另计 `full_recall`（两个来源都进 top-K 才算命中）。详见 `docs/评估报告.md`。
 
 ## 技术栈
 
@@ -74,8 +95,12 @@
 # 1. 启动 Redis + PostgreSQL(PGVector)
 docker compose up -d
 
-# 2. 初始化业务库 MySQL（schema.sql 会 DROP+重建，含种子；每次改表后重放）
+# 2. 初始化业务库 MySQL
+#    schema.sql 是唯一权威：DROP + CREATE 并写入种子数据（含 13 张表全部结构）
+#    ⚠ 它会清空既有业务数据；表结构有增量变更时改用 ALTER TABLE，不要整库重放
 mysql -uroot -p < src/main/resources/schema.sql
+#    tools/db/ 下另有几个一次性迁移脚本（account_v2 / guard / feedback），
+#    仅供从旧版本升级的库使用 —— 用最新 schema.sql 建库时无需执行
 
 # 3. 配置本地密钥（必须二选一，否则连不上库/JWT 会失败）
 # 方式 A（推荐）：复制示例为本地覆盖文件（已在 .gitignore 中忽略，不会提交）
@@ -142,7 +167,6 @@ pwsh tools\docker\up-full.ps1
 
 | 文档 | 内容 |
 | --- | --- |
-| `CLAUDE.md` | 开发期权威约定、关键决策与踩坑（**唯一权威**） |
 | `docs/演示脚本.md` | 答辩演示导演本（七幕 + 每步要指给评委看的点） |
 | `docs/评估报告.md` | 150 题量化评估结果（指标、阈值标定、局限声明） |
 | `docs/检索对比表.md` | 四种检索模式的 Recall@5 / MRR 对比 |
@@ -150,7 +174,6 @@ pwsh tools\docker\up-full.ps1
 | `docs/压测报告.md` | JMeter 阶梯压测结果与瓶颈分析 |
 | `docs/注入防护演示.md` | 注入防护三幕演示 + 三层设计 + 攻防样本说明 |
 | `docs/云服务器部署手册.md` | 单机部署：规格/安全组/HTTPS/备份/排查/退化方案 |
-| `docs/知识库运营手册.md` | 知识数据采集/切块/导入的方法论与 SOP |
 | `tools/eval/README.md` | 离线量化评估：指标口径、跑分、逐字保真、缓存旁路 |
 | `tools/verify_all.ps1` | **一条命令验证全部改动**，输出 PASS/FAIL 汇总 |
 | `docs/用户提问全链路说明.md` | 逐段标注 `文件:行号` 的全链路代码索引 |
@@ -268,7 +291,7 @@ pwsh tools\docker\up-full.ps1
 
 ## 知识数据流水线（采集 → 切块 → 导入）
 
-1. 日常一键：`tools/kb_oneclick.ps1`（采集→切块→可选加小标题→后台导入→修复 vector_status=2）；方法论与命令详见 `docs/知识库运营手册.md`。
+1. 日常一键：`tools/kb_oneclick.ps1`（采集→切块→可选加小标题→后台导入→修复 vector_status=2）。
 2. 官网采集：`tools/web-collect/collect_ysu.py` 精抓燕山大学官网文章输出 Markdown + `manifest`。
 3. 切块：`tools/kb-import/kb_csv_builder.ps1` 按标题/段落聚成 150~500 字片段，输出 `标题,分类ID,内容,关键词,来源链接`（UTF-8 BOM，按 manifest 回填来源链接——热门 Top10 归并的数据基础）。
 4. （可选）`tools/kb-import/add_subheadings.py` 调 DeepSeek 为片段生成小标题（按 MD5 缓存不重复计费）。
@@ -288,8 +311,10 @@ pwsh tools\docker\up-full.ps1
 │  └─ util/         # JwtUtil、Result、SecurityUtil
 ├─ src/main/resources/application.yml、schema.sql
 ├─ frontend/        # Vue3 单页（api/views/layouts/router/stores/components/data）
-├─ tools/           # 知识数据流水线脚本 + db 迁移 SQL
-├─ docs/知识库运营手册.md
+├─ tools/           # 知识数据流水线脚本 + db 迁移 SQL（各子目录有独立 README）
+├─ docs/            # 评估/压测/检索对比/部署手册 + 交互式架构图 HTML
+├─ mp-client/       # 微信小程序端（uni-app Vue3）
+├─ android-client/  # Android 端（Kotlin + Compose）
 └─ init-pg.sql      # PG vector 扩展
 ```
 
@@ -297,11 +322,5 @@ pwsh tools\docker\up-full.ps1
 
 - 后端：`mvn clean compile -DskipTests`（需 MySQL / PostgreSQL / Redis 已启动并配置 `DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`）
 - 前端：`cd frontend && npm run build`
-
-## 注意事项
-
-- **改 schema.sql 后**需重放 `mysql -uroot -p < src/main/resources/schema.sql`（DROP+CREATE 清数据）；增量加列用 `ALTER TABLE`。账号体系演进参考一次性迁移 `tools/db/migration_account_v2.sql`（重建 sys_user/sys_id_seq/sys_banned_word，保留知识库与 RBAC 种子）。
-- **deepseek-chat 对长文逐字复述不稳定**：生成侧一律「模型只选编号/分组、Java 拼原文」，不要绕回整段复述路径。
-- 存量 `qa:cache:*` 若为改版前的否定答案，需清一次 Redis 再复测（否则旧否定会命中）。否定兜底已改为不入缓存。
-- Windows PowerShell 直接 `curl --data-raw` 发中文会按 GBK 编码 → 后端报「系统繁忙」；请先落 UTF-8（无 BOM）文件再 `--data-binary @file`。
-- 数据库密码已 BCrypt 入库、接口返回一律置空；前端密码框 `show-password`。
+- 单元测试：`mvn test -Dtest=InjectionGuardTest,IntentServiceTest`（纯 JUnit，无需 Spring 上下文）
+- 全量验收：`pwsh tools\verify_all.ps1`

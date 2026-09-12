@@ -48,6 +48,10 @@ Thumbs.db
 memory/
 .claude-code/
 
+# 作者本地的开发约定与会话交接（不随仓库分发，仅本地保留）
+/CLAUDE.md
+/dev-notes/
+
 # 本地密钥与环境（示例见 application.yml 注释）
 .env
 .env.*

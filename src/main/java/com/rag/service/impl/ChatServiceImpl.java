@@ -1251,7 +1251,7 @@ public class ChatServiceImpl implements ChatService {
         return result;
     }
 
-    /** 兜底文案与拒答都不入缓存：避免「没有内容」这类旧否定被误命中 1 小时（CLAUDE.md 踩坑） */
+    /** 兜底文案与拒答都不入缓存：避免「没有内容」这类旧否定被误命中 1 小时 */
     private boolean skipCache(String answer, AnswerContext ctx) {
         return (ctx != null && ctx.rejected) || NO_CONTENT_MSG.equals(answer);
     }
