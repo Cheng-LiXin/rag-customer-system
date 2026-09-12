@@ -290,7 +290,14 @@ def collect_article(url: str, cfg: dict, opener: urllib.request.OpenerDirector, 
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(f"# {title}\n\n{body}\n")
     state[url] = fname
-    log(f"[{title}] {len(body):>6} 字 -> {os.path.relpath(fpath, HERE)}")
+    # 日志里想让路径短一些，但 os.path.relpath 在 Windows 上**跨盘符会抛 ValueError**
+    # （如 --output 指到 D: 而脚本在 E:），一旦抛出就会被调用方的 try/except 吞掉，
+    # 后果是文件虽已写盘、却不会进入 manifest，来源链接随之全部丢失。故此处必须兜底。
+    try:
+        shown = os.path.relpath(fpath, HERE)
+    except ValueError:
+        shown = fpath
+    log(f"[{title}] {len(body):>6} 字 -> {shown}")
     return {"title": title, "file": fname, "url": url, "chars": len(body)}
 
 

@@ -56,8 +56,8 @@ kb-import/
 # 1. 先建好知识分类，拿分类ID
 #    POST /api/knowledge/category  或后台「知识库管理」界面创建
 # 2. 拿 admin token 并上传
-TOKEN=$(curl -s -X POST localhost:8080/api/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"Admin@Ysu2026"}' | ...)  # 取 data.token
-curl -X POST http://localhost:8080/api/knowledge/chunk/import -H "Authorization: Bearer $TOKEN" -F "file=@knowledge_import.csv"
+TOKEN=$(curl -s -X POST http://localhost:8081/api/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"Admin@Ysu2026"}' | ...)  # 取 data.token
+curl -X POST http://localhost:8081/api/knowledge/chunk/import -H "Authorization: Bearer $TOKEN" -F "file=@knowledge_import.csv"
 ```
 
 返回 `{ success, fail, errors }`。`success` **只代表写入 MySQL**，向量化失败会单独把该条标成 `vectorStatus=2`——导入后务必到后台/`GET /api/knowledge/chunk/page?status=2` 复查，失败条目用 `POST /api/knowledge/chunk/{id}/reindex` 重建。
