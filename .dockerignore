@@ -1,0 +1,28 @@
+# 后端镜像只需要 pom.xml + src/，其余一律不进构建上下文（上下文越小构建越快）
+target/
+.git/
+.gitignore
+.idea/
+.claude/
+.mimocode/
+memory/
+META-INF/
+git/
+
+# 前端与两个移动端各自独立构建，不进后端上下文
+frontend/
+mp-client/
+android-client/
+
+# 文档、工具、数据产物与本地密钥
+docs/
+tools/
+*.log
+.env
+.env.*
+!.env.example
+application-local.yml
+Dockerfile
+.dockerignore
+HANDOFF.md
+CLAUDE.md

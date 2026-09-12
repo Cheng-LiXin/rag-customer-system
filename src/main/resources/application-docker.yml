@@ -1,0 +1,45 @@
+# =============================================================================
+# Docker Compose 部署 profile：把「本机 localhost」换成「容器服务名」
+# -----------------------------------------------------------------------------
+# 激活方式：环境变量 SPRING_PROFILES_ACTIVE=docker（docker-compose.yml 已设置）。
+#
+# 与 application-local.yml 的分工：
+#   - local  ：给本机 IDEA / 命令行直接跑用，真实口令写在那个被 gitignore 的文件里；
+#   - docker ：**刻意不含任何口令**，全部由环境变量注入（见 .env.example），
+#              这样镜像可以安全分发，也不会把密钥烤进镜像层。
+#
+# 覆盖的键只有「主机名」和「口令来源」，其余（AI Key、rag.* 业务配置）沿用 application.yml。
+# =============================================================================
+spring:
+  datasource:
+    # localhost:3306 → mysql:3306（compose 服务名）
+    url: jdbc:mysql://mysql:3306/rag_customer?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:-root}
+    password: ${MYSQL_PASSWORD:-}
+  data:
+    redis:
+      host: redis
+      port: 6379
+      password: ${REDIS_PASSWORD:-}
+
+pgvector:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/rag_vector
+    username: ${POSTGRES_USERNAME:-postgres}
+    password: ${POSTGRES_PASSWORD:-}
+
+# 容器部署不需要打印每条 SQL（StdOutImpl 会把日志刷爆）
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+rag:
+  demo:
+    # ★ 部署环境**必须**关掉密码重置：容器每次重建都会重启应用，
+    #   开着的话你在后台改过的口令会被改回 .env 里的默认值。
+    #   首次建号仍会用 .env 里的 DEMO_*_PASSWORD 初始化一次。
+    reset-passwords: ${DEMO_RESET_PASSWORDS:false}
+
+logging:
+  level:
+    com.rag: info
