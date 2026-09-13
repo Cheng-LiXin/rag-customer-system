@@ -59,21 +59,6 @@
             立即注册
           </el-link>
         </div>
-
-        <div class="demo-accounts">
-          <div class="demo-title">演示账号（点击快速填充）</div>
-          <div class="demo-list">
-            <el-tag
-              v-for="acc in demoAccounts"
-              :key="acc.username"
-              class="demo-tag"
-              effect="plain"
-              @click="fill(acc)"
-            >
-              {{ acc.label }} · {{ acc.username }} / {{ acc.password }}
-            </el-tag>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -103,11 +88,7 @@ const rules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
-const demoAccounts = [
-  { label: '管理员', username: 'admin', password: 'Admin@Ysu2026' },
-  { label: '客服', username: 'agent', password: 'Agent@Ysu2026' },
-  { label: '用户', username: 'user', password: 'User@Ysu2026' }
-]
+
 
 function fill(acc: { username: string; password: string }) {
   form.username = acc.username

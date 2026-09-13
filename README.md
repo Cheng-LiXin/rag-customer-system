@@ -177,7 +177,6 @@ pwsh tools\docker\up-full.ps1
 | `tools/eval/README.md` | 离线量化评估：指标口径、跑分、逐字保真、缓存旁路 |
 | `tools/verify_all.ps1` | **一条命令验证全部改动**，输出 PASS/FAIL 汇总 |
 | `docs/用户提问全链路说明.md` | 逐段标注 `文件:行号` 的全链路代码索引 |
-| `docs/rag-customer-system-architecture.html` 等 | 交互式架构图 / 时序图 / 会话状态机（可切明暗主题） |
 
 ## 默认账号
 
