@@ -178,13 +178,23 @@ public class AuthController {
         return Result.success(data);
     }
 
-    /** 修改当前登录用户资料（昵称：30 天内仅可改 1 次 + 违禁词校验） */
+    /**
+     * 修改当前登录用户资料（昵称：30 天内仅可改 1 次 + 违禁词校验）。
+     *
+     * <p><b>字段语义（重要）：{@code null} = 本次不修改（保持原值）；空串 = 显式清空。</b>
+     * 小程序端只提交发生变化的字段（见 mp-client 的 profile.vue），缺省字段在 JSON 里根本不存在、
+     * 反序列化后为 {@code null}。若把 null 当成「改成 null」，会同时踩两个坑：
+     * ① 误判昵称发生变更，从而在冷却期内拒绝保存（用户改地区/邮箱却提示「昵称 30 天内只能改一次」）；
+     * ② 把本次未提交的字段（邮箱/手机/身份）整片覆盖成 null，静默丢数据。
+     * Web 端提交的是完整对象（空值为空串），因此加 null 守卫对它完全透明。
+     */
     @PutMapping("/profile")
     public Result<Void> updateProfile(@RequestBody @Valid ProfileRequest request) {
         SysUser user = currentUser();
         if (user == null) return Result.error("未登录");
-        // 昵称变更时才做 30 天限改与违禁词校验（其他字段随时可改）
-        boolean nicknameChanged = !Objects.equals(user.getNickname(), request.getNickname());
+        // 昵称：仅当本次确实提供了新值、且与库中不同时，才做 30 天限改与违禁词校验
+        boolean nicknameChanged = request.getNickname() != null
+                && !Objects.equals(user.getNickname(), request.getNickname());
         if (nicknameChanged) {
             String msg = bannedWordService.bannedMessage(request.getNickname(), "昵称");
             if (msg != null) {
@@ -195,21 +205,21 @@ public class AuthController {
                 return Result.error("昵称30天内仅可修改1次，距下次可改还有 " + remaining + " 天");
             }
             user.setNicknameUpdatedAt(LocalDateTime.now());
+            user.setNickname(request.getNickname());
         }
         // 邮箱变更时才做违禁词校验（没改邮箱不重复扫词表）
-        boolean emailChanged = !Objects.equals(user.getEmail(), request.getEmail());
-        if (emailChanged) {
+        if (request.getEmail() != null && !Objects.equals(user.getEmail(), request.getEmail())) {
             String msg = bannedWordService.bannedMessage(request.getEmail(), "邮箱");
             if (msg != null) {
                 return Result.error(msg);
             }
+            user.setEmail(request.getEmail());
         }
-        user.setNickname(request.getNickname());
-        user.setEmail(request.getEmail());
-        user.setPhone(request.getPhone());
-        user.setProvince(request.getProvince());
-        user.setCity(request.getCity());
-        user.setIdentity(request.getIdentity());
+        // 其余字段：提供了才写（null 表示本次不改）
+        if (request.getPhone() != null) user.setPhone(request.getPhone());
+        if (request.getProvince() != null) user.setProvince(request.getProvince());
+        if (request.getCity() != null) user.setCity(request.getCity());
+        if (request.getIdentity() != null) user.setIdentity(request.getIdentity());
         userService.updateById(user);
         return Result.success();
     }
