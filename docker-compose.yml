@@ -20,6 +20,9 @@ services:
     image: redis:7-alpine
     container_name: rag-redis
     restart: unless-stopped
+    # 与 mysql / postgres / 后端 JVM 统一时区（Redis 本身无时间列，只为整栈一致）
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "6379:6379"
     volumes:
@@ -40,6 +43,8 @@ services:
       POSTGRES_DB: rag_vector
       POSTGRES_USER: ${POSTGRES_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # 与 mysql / 后端 JVM 统一时区（向量表无时间列，此处只为整栈一致，避免日后踩坑）
+      TZ: Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:
@@ -63,10 +68,19 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
       MYSQL_DATABASE: rag_customer
+      # ★ 时区必须与后端 JVM 一致（Dockerfile 里设的是 Asia/Shanghai）。容器默认 UTC 会让
+      #   CURRENT_TIMESTAMP 写出的时间比 JVM 慢 8 小时；而所有 create_time 都靠列的
+      #   DEFAULT CURRENT_TIMESTAMP 填充（项目没有 MyBatis-Plus 自动填充），
+      #   ConversationAutoCloseTask 却用 JVM 时间（+8）算「多久没消息」去比这些时间戳
+      #   → 会话被误判「超时」而立即关闭（实测：刚落库 4 秒的消息被判成已超时 10 分钟），
+      #   后台显示的会话时间也整体慢 8 小时。
+      TZ: Asia/Shanghai
     command:
       - mysqld
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_general_ci
+      # 显式固定偏移：即使镜像内缺 tzdata 导致 SYSTEM 解析不出 Asia/Shanghai 也稳妥
+      - --default-time-zone=+08:00
     ports:
       # 映射 3307 避开本机 3306；容器内部仍是 mysql:3306
       - "${MYSQL_PORT:-3307}:3306"
